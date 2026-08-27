@@ -8,18 +8,14 @@ import os
 import sys
 import subprocess
 import time
+import signal
 from pathlib import Path
 
-
-def run_command(cmd, shell=True, capture_output=True):
-    """执行系统命令"""
-    try:
-        result = subprocess.run(
-            cmd, shell=shell, capture_output=capture_output, text=True
-        )
-        return result.returncode == 0, result.stdout, result.stderr
-    except Exception as e:
-        return False, "", str(e)
+# Web 服务器配置
+_raw_port = int(os.environ.get("WEBSERVER_PORT", "8080"))
+WEBSERVER_PORT = _raw_port if 1 <= _raw_port <= 65535 else 8080
+WEBSERVER_DIR = "/app/output"
+WEBSERVER_PID_FILE = "/tmp/webserver.pid"
 
 
 def manual_run():
@@ -27,7 +23,7 @@ def manual_run():
     print("🔄 手动执行爬虫...")
     try:
         result = subprocess.run(
-            ["python", "main.py"], cwd="/app", capture_output=False, text=True
+            ["python", "-m", "trendradar"], cwd="/app", capture_output=False, text=True
         )
         if result.returncode == 0:
             print("✅ 执行完成")
@@ -126,10 +122,10 @@ def show_status():
     supercronic_is_pid1 = False
     pid1_cmdline = ""
     try:
-        with open('/proc/1/cmdline', 'r') as f:
-            pid1_cmdline = f.read().replace('\x00', ' ').strip()
+        with open('/proc/1/cmdline', 'rb') as f:
+            pid1_cmdline = f.read().replace(b'\x00', b' ').decode('utf-8', errors='ignore').strip()
         print(f"  🔍 PID 1 进程: {pid1_cmdline}")
-        
+
         if "supercronic" in pid1_cmdline.lower():
             print("  ✅ supercronic 正确运行为 PID 1")
             supercronic_is_pid1 = True
@@ -181,7 +177,7 @@ def show_status():
                     with open(file_path, 'r') as f:
                         crontab_content = f.read().strip()
                         print(f"         内容: {crontab_content}")
-                except:
+                except Exception:
                     pass
         else:
             print(f"    ❌ {description}: 不存在")
@@ -253,15 +249,15 @@ def show_status():
         if pid1_cmdline:
             print(f"    📋 当前 PID 1: {pid1_cmdline}")
         print("    💡 建议操作:")
-        print("       • 重启容器: docker restart trend-radar")
-        print("       • 检查容器日志: docker logs trend-radar")
+        print("       • 重启容器: docker restart trendradar")
+        print("       • 检查容器日志: docker logs trendradar")
 
     # 显示日志检查建议
     print("  📋 运行状态检查:")
-    print("    • 查看完整容器日志: docker logs trend-radar")
-    print("    • 查看实时日志: docker logs -f trend-radar")
+    print("    • 查看完整容器日志: docker logs trendradar")
+    print("    • 查看实时日志: docker logs -f trendradar")
     print("    • 手动执行测试: python manage.py run")
-    print("    • 重启容器服务: docker restart trend-radar")
+    print("    • 重启容器服务: docker restart trendradar")
 
 
 def show_config():
@@ -269,22 +265,39 @@ def show_config():
     print("⚙️ 当前配置:")
 
     env_vars = [
+        # 运行配置
         "CRON_SCHEDULE",
         "RUN_MODE",
         "IMMEDIATE_RUN",
+        # 通知渠道
         "FEISHU_WEBHOOK_URL",
         "DINGTALK_WEBHOOK_URL",
         "WEWORK_WEBHOOK_URL",
+        "WEWORK_MSG_TYPE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
-        "CONFIG_PATH",
-        "FREQUENCY_WORDS_PATH",
+        "NTFY_SERVER_URL",
+        "NTFY_TOPIC",
+        "NTFY_TOKEN",
+        "BARK_URL",
+        "SLACK_WEBHOOK_URL",
+        # AI 分析配置
+        "AI_ANALYSIS_ENABLED",
+        "AI_API_KEY",
+        "AI_PROVIDER",
+        "AI_MODEL",
+        "AI_BASE_URL",
+        # 远程存储配置
+        "S3_BUCKET_NAME",
+        "S3_ACCESS_KEY_ID",
+        "S3_ENDPOINT_URL",
+        "S3_REGION",
     ]
 
     for var in env_vars:
         value = os.environ.get(var, "未设置")
         # 隐藏敏感信息
-        if any(sensitive in var for sensitive in ["WEBHOOK", "TOKEN", "KEY"]):
+        if var == "BARK_URL" or any(sensitive in var for sensitive in ["WEBHOOK", "TOKEN", "KEY", "SECRET"]):
             if value and value != "未设置":
                 masked_value = value[:10] + "***" if len(value) > 10 else "***"
                 print(f"  {var}: {masked_value}")
@@ -315,33 +328,63 @@ def show_files():
         print("  📭 输出目录不存在")
         return
 
-    # 显示最近的文件
-    date_dirs = sorted([d for d in output_dir.iterdir() if d.is_dir()], reverse=True)
+    # 新结构：扁平化目录
+    # - output/news/*.db
+    # - output/rss/*.db
+    # - output/txt/{date}/*.txt
+    # - output/html/{date}/*.html
 
-    if not date_dirs:
-        print("  📭 输出目录为空")
-        return
+    # 检查 news 数据库
+    news_dir = output_dir / "news"
+    if news_dir.exists():
+        db_files = sorted(news_dir.glob("*.db"), key=lambda x: x.name, reverse=True)
+        if db_files:
+            print(f"  💾 热榜数据库 (news/): {len(db_files)} 个")
+            for db_file in db_files[:5]:
+                mtime = time.ctime(db_file.stat().st_mtime)
+                size_kb = db_file.stat().st_size // 1024
+                print(f"    📀 {db_file.name} ({size_kb}KB, {mtime.split()[3][:5]})")
+            if len(db_files) > 5:
+                print(f"    ... 还有 {len(db_files) - 5} 个")
 
-    # 显示最近2天的文件
-    for date_dir in date_dirs[:2]:
-        print(f"  📅 {date_dir.name}:")
-        for subdir in ["html", "txt"]:
-            sub_path = date_dir / subdir
-            if sub_path.exists():
-                files = list(sub_path.glob("*"))
-                if files:
-                    recent_files = sorted(
-                        files, key=lambda x: x.stat().st_mtime, reverse=True
-                    )[:3]
-                    print(f"    📂 {subdir}: {len(files)} 个文件")
-                    for file in recent_files:
-                        mtime = time.ctime(file.stat().st_mtime)
-                        size_kb = file.stat().st_size // 1024
-                        print(
-                            f"      📄 {file.name} ({size_kb}KB, {mtime.split()[3][:5]})"
-                        )
-                else:
-                    print(f"    📂 {subdir}: 空")
+    # 检查 RSS 数据库
+    rss_dir = output_dir / "rss"
+    if rss_dir.exists():
+        db_files = sorted(rss_dir.glob("*.db"), key=lambda x: x.name, reverse=True)
+        if db_files:
+            print(f"  📰 RSS 数据库 (rss/): {len(db_files)} 个")
+            for db_file in db_files[:5]:
+                mtime = time.ctime(db_file.stat().st_mtime)
+                size_kb = db_file.stat().st_size // 1024
+                print(f"    📀 {db_file.name} ({size_kb}KB, {mtime.split()[3][:5]})")
+            if len(db_files) > 5:
+                print(f"    ... 还有 {len(db_files) - 5} 个")
+
+    # 检查 TXT 快照目录
+    txt_dir = output_dir / "txt"
+    if txt_dir.exists():
+        date_dirs = sorted([d for d in txt_dir.iterdir() if d.is_dir()], reverse=True)
+        if date_dirs:
+            print(f"  📄 TXT 快照 (txt/): {len(date_dirs)} 天")
+            for date_dir in date_dirs[:3]:
+                txt_files = list(date_dir.glob("*.txt"))
+                if txt_files:
+                    recent = sorted(txt_files, key=lambda x: x.stat().st_mtime, reverse=True)[0]
+                    mtime = time.ctime(recent.stat().st_mtime)
+                    print(f"    📅 {date_dir.name}: {len(txt_files)} 个文件 (最新: {mtime.split()[3][:5]})")
+
+    # 检查 HTML 报告目录
+    html_dir = output_dir / "html"
+    if html_dir.exists():
+        date_dirs = sorted([d for d in html_dir.iterdir() if d.is_dir()], reverse=True)
+        if date_dirs:
+            print(f"  🌐 HTML 报告 (html/): {len(date_dirs)} 天")
+            for date_dir in date_dirs[:3]:
+                html_files = list(date_dir.glob("*.html"))
+                if html_files:
+                    recent = sorted(html_files, key=lambda x: x.stat().st_mtime, reverse=True)[0]
+                    mtime = time.ctime(recent.stat().st_mtime)
+                    print(f"    📅 {date_dir.name}: {len(html_files)} 个文件 (最新: {mtime.split()[3][:5]})")
 
 
 def show_logs():
@@ -361,37 +404,242 @@ def show_logs():
                 subprocess.run(["tail", "-f", log_file], check=True)
                 break
         else:
-            print("📋 无法找到标准日志文件，建议使用: docker logs trend-radar")
+            print("📋 无法找到标准日志文件，建议使用: docker logs trendradar")
             
     except KeyboardInterrupt:
         print("\n👋 退出日志查看")
     except Exception as e:
         print(f"❌ 查看日志失败: {e}")
-        print("💡 建议使用: docker logs trend-radar")
+        print("💡 建议使用: docker logs trendradar")
 
 
 def restart_supercronic():
     """重启supercronic进程"""
     print("🔄 重启supercronic...")
     print("⚠️ 注意: supercronic 是 PID 1，无法直接重启")
-    
+
     # 检查当前 PID 1
     try:
-        with open('/proc/1/cmdline', 'r') as f:
-            pid1_cmdline = f.read().replace('\x00', ' ').strip()
+        with open('/proc/1/cmdline', 'rb') as f:
+            pid1_cmdline = f.read().replace(b'\x00', b' ').decode('utf-8', errors='ignore').strip()
         print(f"  🔍 当前 PID 1: {pid1_cmdline}")
-        
+
         if "supercronic" in pid1_cmdline.lower():
             print("  ✅ PID 1 是 supercronic")
             print("  💡 要重启 supercronic，需要重启整个容器:")
-            print("    docker restart trend-radar")
+            print("    docker restart trendradar")
         else:
             print("  ❌ PID 1 不是 supercronic，这是异常状态")
             print("  💡 建议重启容器以修复问题:")
-            print("    docker restart trend-radar")
+            print("    docker restart trendradar")
     except Exception as e:
         print(f"  ❌ 无法检查 PID 1: {e}")
-        print("  💡 建议重启容器: docker restart trend-radar")
+        print("  💡 建议重启容器: docker restart trendradar")
+
+
+def _read_proc_cmdline(pid: int) -> str:
+    """读取进程 cmdline，失败时返回空字符串。"""
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    if not proc_cmdline.exists():
+        return ""
+    try:
+        with open(proc_cmdline, "rb") as f:
+            return f.read().replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+
+
+def _is_expected_webserver_process(pid: int) -> bool:
+    """检查 pid 是否是当前端口的 http.server 进程。"""
+    cmdline = _read_proc_cmdline(pid)
+    if not cmdline:
+        return False
+    return "http.server" in cmdline and str(WEBSERVER_PORT) in cmdline
+
+
+def _terminate_webserver_process(pid: int, require_expected: bool = True) -> bool:
+    """尝试终止 Web 服务器进程。
+
+    require_expected=True 时，仅终止确认是 http.server 的进程，避免误杀。
+    """
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return True
+
+    if require_expected and not _is_expected_webserver_process(pid):
+        print(f"  ⚠️ PID {pid} 存在但并非 Web 服务器进程，跳过终止")
+        return False
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+        time.sleep(0.5)
+        try:
+            os.kill(pid, 0)
+            os.kill(pid, signal.SIGKILL)
+            print(f"  ⚠️ 强制停止 Web 服务器 (PID: {pid})")
+        except OSError:
+            print(f"  ✅ Web 服务器已停止 (PID: {pid})")
+        return True
+    except OSError:
+        return True
+
+
+def _is_webserver_running(pid: int) -> bool:
+    """检查 Web 服务器进程是否真正在运行。"""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+
+    if not _is_expected_webserver_process(pid):
+        return False
+
+    try:
+        import urllib.request
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+        opener = urllib.request.build_opener(_NoRedirect)
+        req = urllib.request.Request(f"http://127.0.0.1:{WEBSERVER_PORT}/", method="HEAD")
+        opener.open(req, timeout=3)
+        return True
+    except Exception:
+        try:
+            time.sleep(1)
+            opener.open(req, timeout=3)
+            return True
+        except Exception:
+            return False
+
+
+def _cleanup_stale_pid():
+    """清理失效的 PID 文件"""
+    if not Path(WEBSERVER_PID_FILE).exists():
+        return False
+
+    try:
+        with open(WEBSERVER_PID_FILE, 'r') as f:
+            old_pid = int(f.read().strip())
+        os.remove(WEBSERVER_PID_FILE)
+        print(f"  🧹 清理失效 PID 文件 (PID: {old_pid})")
+        return True
+    except Exception:
+        return False
+
+
+def start_webserver():
+    """启动 Web 服务器托管 output 目录"""
+    print(f"🌐 启动 Web 服务器 (端口: {WEBSERVER_PORT})...")
+    print(f"  🔒 安全提示：仅提供静态文件访问，限制在 {WEBSERVER_DIR} 目录")
+
+    # 检查是否已经运行
+    if Path(WEBSERVER_PID_FILE).exists():
+        try:
+            with open(WEBSERVER_PID_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+
+            # 使用增强的进程检查
+            if _is_webserver_running(old_pid):
+                print(f"  ⚠️ Web 服务器已在运行 (PID: {old_pid})")
+                print(f"  💡 访问: http://localhost:{WEBSERVER_PORT}")
+                print("  💡 停止服务: python manage.py stop_webserver")
+                return
+
+            # 进程异常时优先尝试终止旧进程，避免端口占用导致重启失败
+            _terminate_webserver_process(old_pid, require_expected=True)
+            _cleanup_stale_pid()
+            print(f"  ℹ️ 检测到失效的 PID 文件，已清理")
+
+        except Exception as e:
+            print(f"  ⚠️ 清理旧的 PID 文件: {e}")
+            _cleanup_stale_pid()
+
+    # 检查目录是否存在
+    if not Path(WEBSERVER_DIR).exists():
+        print(f"  ❌ 目录不存在: {WEBSERVER_DIR}")
+        return
+
+    try:
+        # 启动 HTTP 服务器
+        # 使用 --bind 绑定到 0.0.0.0 使容器内部可访问
+        # 工作目录限制在 WEBSERVER_DIR，防止访问其他目录
+        process = subprocess.Popen(
+            [sys.executable, '-m', 'http.server', str(WEBSERVER_PORT), '--bind', '0.0.0.0'],
+            cwd=WEBSERVER_DIR,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+
+        # 等待一下确保服务器启动
+        time.sleep(1)
+
+        # 检查进程是否还在运行
+        if process.poll() is None:
+            # 保存 PID
+            with open(WEBSERVER_PID_FILE, 'w') as f:
+                f.write(str(process.pid))
+            print(f"  ✅ Web 服务器已启动 (PID: {process.pid})")
+            print(f"  📁 服务目录: {WEBSERVER_DIR} (只读，仅静态文件)")
+            print(f"  🌐 访问地址: http://localhost:{WEBSERVER_PORT}")
+            print(f"  📄 首页: http://localhost:{WEBSERVER_PORT}/index.html")
+            print("  💡 停止服务: python manage.py stop_webserver")
+        else:
+            print(f"  ❌ Web 服务器启动失败")
+    except Exception as e:
+        print(f"  ❌ 启动失败: {e}")
+
+
+def stop_webserver():
+    """停止 Web 服务器"""
+    print("🛑 停止 Web 服务器...")
+
+    if not Path(WEBSERVER_PID_FILE).exists():
+        print("  ℹ️ Web 服务器未运行")
+        return
+
+    try:
+        with open(WEBSERVER_PID_FILE, 'r') as f:
+            pid = int(f.read().strip())
+        _terminate_webserver_process(pid, require_expected=True)
+        if Path(WEBSERVER_PID_FILE).exists():
+            os.remove(WEBSERVER_PID_FILE)
+    except Exception as e:
+        print(f"  ❌ 停止失败: {e}")
+        # 尝试清理 PID 文件
+        try:
+            os.remove(WEBSERVER_PID_FILE)
+        except Exception:
+            pass
+
+
+def webserver_status():
+    """查看 Web 服务器状态"""
+    print("🌐 Web 服务器状态:")
+
+    if not Path(WEBSERVER_PID_FILE).exists():
+        print("  ⭕ 未运行")
+        print(f"  💡 启动服务: python manage.py start_webserver")
+        return
+
+    try:
+        with open(WEBSERVER_PID_FILE, 'r') as f:
+            pid = int(f.read().strip())
+
+        # 使用增强的进程检查
+        if _is_webserver_running(pid):
+            print(f"  ✅ 运行中 (PID: {pid})")
+            print(f"  📁 服务目录: {WEBSERVER_DIR}")
+            print(f"  🌐 访问地址: http://localhost:{WEBSERVER_PORT}")
+            print(f"  📄 首页: http://localhost:{WEBSERVER_PORT}/index.html")
+            print("  💡 停止服务: python manage.py stop_webserver")
+        else:
+            print(f"  ⭕ 未运行 (PID 文件存在但进程不可用)")
+            _cleanup_stale_pid()
+            print("  💡 启动服务: python manage.py start_webserver")
+    except Exception as e:
+        print(f"  ❌ 状态检查失败: {e}")
 
 
 def show_help():
@@ -400,42 +648,53 @@ def show_help():
 🐳 TrendRadar 容器管理工具
 
 📋 命令列表:
-  run         - 手动执行一次爬虫
-  status      - 显示容器运行状态
-  config      - 显示当前配置
-  files       - 显示输出文件
-  logs        - 实时查看日志
-  restart     - 重启说明
-  help        - 显示此帮助
+  run              - 手动执行一次爬虫
+  status           - 显示容器运行状态
+  config           - 显示当前配置
+  files            - 显示输出文件
+  logs             - 实时查看日志
+  restart          - 重启说明
+  start_webserver  - 启动 Web 服务器托管 output 目录
+  stop_webserver   - 停止 Web 服务器
+  webserver_status - 查看 Web 服务器状态
+  help             - 显示此帮助
 
 📖 使用示例:
   # 在容器中执行
   python manage.py run
   python manage.py status
   python manage.py logs
-  
+  python manage.py start_webserver
+
   # 在宿主机执行
-  docker exec -it trend-radar python manage.py run
-  docker exec -it trend-radar python manage.py status
-  docker logs trend-radar
+  docker exec -it trendradar python manage.py run
+  docker exec -it trendradar python manage.py status
+  docker exec -it trendradar python manage.py start_webserver
+  docker logs trendradar
 
 💡 常用操作指南:
   1. 检查运行状态: status
      - 查看 supercronic 是否为 PID 1
      - 检查配置文件和关键文件
      - 查看 cron 调度设置
-  
-  2. 手动执行测试: run  
+
+  2. 手动执行测试: run
      - 立即执行一次新闻爬取
      - 测试程序是否正常工作
-  
+
   3. 查看日志: logs
      - 实时监控运行情况
-     - 也可使用: docker logs trend-radar
-  
+     - 也可使用: docker logs trendradar
+
   4. 重启服务: restart
      - 由于 supercronic 是 PID 1，需要重启整个容器
-     - 使用: docker restart trend-radar
+     - 使用: docker restart trendradar
+
+  5. Web 服务器管理:
+     - 启动: start_webserver
+     - 停止: stop_webserver
+     - 状态: webserver_status
+     - 访问: http://localhost:8080
 """
     print(help_text)
 
@@ -453,6 +712,9 @@ def main():
         "files": show_files,
         "logs": show_logs,
         "restart": restart_supercronic,
+        "start_webserver": start_webserver,
+        "stop_webserver": stop_webserver,
+        "webserver_status": webserver_status,
         "help": show_help,
     }
 

@@ -4,6 +4,7 @@
 实现系统状态查询和爬虫触发功能。
 """
 
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -47,8 +48,11 @@ class SystemManagementTools:
             status = self.data_service.get_system_status()
 
             return {
-                **status,
-                "success": True
+                "success": True,
+                "summary": {
+                    "description": "系统运行状态和健康检查信息"
+                },
+                "data": status
             }
 
         except MCPError as e:
@@ -65,6 +69,135 @@ class SystemManagementTools:
                 }
             }
 
+    def _load_crawl_config(self):
+        """加载爬取配置，返回 (config_data, target_platforms_config)"""
+        import yaml
+
+        config_path = self.project_root / "config" / "config.yaml"
+        if not config_path.exists():
+            raise CrawlTaskError(
+                "配置文件不存在",
+                suggestion=f"请确保配置文件存在: {config_path}"
+            )
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            config_data = yaml.safe_load(f)
+
+        platforms_config = config_data.get("platforms", {})
+        if not platforms_config.get("enabled", True):
+            raise CrawlTaskError(
+                "热榜平台已禁用",
+                suggestion="请检查 config/config.yaml 中的 platforms.enabled 配置"
+            )
+        all_platforms = [p for p in platforms_config.get("sources", []) if p.get("enabled", True)]
+        if not all_platforms:
+            raise CrawlTaskError(
+                "配置文件中没有平台配置",
+                suggestion="请检查 config/config.yaml 中的 platforms.sources 配置"
+            )
+
+        return config_data, all_platforms
+
+    def _resolve_target_platforms(self, all_platforms: list, platforms: Optional[List[str]]):
+        """根据用户指定的平台列表过滤，返回 (target_platforms, ids_list)"""
+        if platforms:
+            target_platforms = [p for p in all_platforms if p["id"] in platforms]
+            if not target_platforms:
+                raise CrawlTaskError(
+                    f"指定的平台不存在: {platforms}",
+                    suggestion=f"可用平台: {[p['id'] for p in all_platforms]}"
+                )
+        else:
+            target_platforms = all_platforms
+
+        ids = []
+        for platform in target_platforms:
+            if "name" in platform:
+                ids.append((platform["id"], platform["name"]))
+            else:
+                ids.append(platform["id"])
+
+        return target_platforms, ids
+
+    def _persist_crawl_data(self, storage, news_data, save_to_local, results, id_to_name, failed_ids, current_time, crawl_time_str):
+        """持久化爬取数据，返回 (save_success, save_error_msg, saved_files)"""
+        save_success = False
+        save_error_msg = ""
+        saved_files = {}
+
+        try:
+            if storage.save_news_data(news_data):
+                save_success = True
+
+            if save_to_local:
+                txt_path = storage.save_txt_snapshot(news_data)
+                if txt_path:
+                    saved_files["txt"] = txt_path
+
+                html_content = self._generate_simple_html(results, id_to_name, failed_ids, current_time)
+                html_filename = f"{crawl_time_str}.html"
+                html_path = storage.save_html_report(html_content, html_filename)
+                if html_path:
+                    saved_files["html"] = html_path
+
+        except Exception as e:
+            print(f"[System] 数据保存失败: {e}")
+            save_success = False
+            save_error_msg = str(e)
+
+        return save_success, save_error_msg, saved_files
+
+    def _build_crawl_response(self, results, id_to_name, failed_ids, current_time, include_url,
+                               save_success, save_to_local, save_error_msg, saved_files):
+        """构建爬取结果响应字典"""
+        import time
+
+        news_response_data = []
+        for platform_id, titles_data in results.items():
+            platform_name = id_to_name.get(platform_id, platform_id)
+            for title, info in titles_data.items():
+                news_item = {
+                    "platform_id": platform_id,
+                    "platform_name": platform_name,
+                    "title": title,
+                    "ranks": info.get("ranks", [])
+                }
+                if include_url:
+                    news_item["url"] = info.get("url", "")
+                    news_item["mobile_url"] = info.get("mobileUrl", "")
+                news_response_data.append(news_item)
+
+        result = {
+            "success": True,
+            "summary": {
+                "description": "爬取任务执行结果",
+                "task_id": f"crawl_{int(time.time())}",
+                "status": "completed",
+                "crawl_time": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "total_news": len(news_response_data),
+                "platforms": list(results.keys()),
+                "failed_platforms": failed_ids,
+                "saved_to_local": save_success and save_to_local
+            },
+            "data": news_response_data
+        }
+
+        if save_success:
+            if save_to_local:
+                result["saved_files"] = saved_files
+                result["note"] = "数据已保存到 SQLite 数据库及 output 文件夹"
+            else:
+                result["note"] = "数据已保存到 SQLite 数据库 (仅内存中返回结果，未生成TXT快照)"
+        else:
+            result["saved_to_local"] = False
+            result["save_error"] = save_error_msg
+            if "Read-only file system" in save_error_msg or "Permission denied" in save_error_msg:
+                result["note"] = "爬取成功，但无法写入数据库（Docker只读模式）。数据仅在本次返回中有效。"
+            else:
+                result["note"] = f"爬取成功但保存失败: {save_error_msg}"
+
+        return result
+
     def trigger_crawl(self, platforms: Optional[List[str]] = None, save_to_local: bool = False, include_url: bool = False) -> Dict:
         """
         手动触发一次临时爬取任务（可选持久化）
@@ -76,293 +209,78 @@ class SystemManagementTools:
 
         Returns:
             爬取结果字典，包含新闻数据和保存路径（如果保存）
-
-        Example:
-            >>> tools = SystemManagementTools()
-            >>> # 临时爬取，不保存
-            >>> result = tools.trigger_crawl(platforms=['zhihu', 'weibo'])
-            >>> print(result['data'])
-            >>> # 爬取并保存到本地
-            >>> result = tools.trigger_crawl(platforms=['zhihu'], save_to_local=True)
-            >>> print(result['saved_files'])
         """
         try:
-            import json
-            import time
-            import random
-            import requests
-            from datetime import datetime
-            import pytz
-            import yaml
+            from trendradar.crawler.fetcher import DataFetcher
+            from trendradar.storage.local import LocalStorageBackend
+            from trendradar.storage.base import convert_crawl_results_to_news_data
+            from trendradar.utils.time import get_configured_time, format_date_folder, format_time_filename
+            from ..services.cache_service import get_cache
 
-            # 参数验证
             platforms = validate_platforms(platforms)
 
-            # 加载配置文件
-            config_path = self.project_root / "config" / "config.yaml"
-            if not config_path.exists():
-                raise CrawlTaskError(
-                    "配置文件不存在",
-                    suggestion=f"请确保配置文件存在: {config_path}"
-                )
-
-            # 读取配置
-            with open(config_path, "r", encoding="utf-8") as f:
-                config_data = yaml.safe_load(f)
-
-            # 获取平台配置
-            all_platforms = config_data.get("platforms", [])
-            if not all_platforms:
-                raise CrawlTaskError(
-                    "配置文件中没有平台配置",
-                    suggestion="请检查 config/config.yaml 中的 platforms 配置"
-                )
-
-            # 过滤平台
-            if platforms:
-                target_platforms = [p for p in all_platforms if p["id"] in platforms]
-                if not target_platforms:
-                    raise CrawlTaskError(
-                        f"指定的平台不存在: {platforms}",
-                        suggestion=f"可用平台: {[p['id'] for p in all_platforms]}"
-                    )
-            else:
-                target_platforms = all_platforms
-
-            # 获取请求间隔
-            request_interval = config_data.get("crawler", {}).get("request_interval", 100)
-
-            # 构建平台ID列表
-            ids = []
-            for platform in target_platforms:
-                if "name" in platform:
-                    ids.append((platform["id"], platform["name"]))
-                else:
-                    ids.append(platform["id"])
+            # 1. 加载配置
+            config_data, all_platforms = self._load_crawl_config()
+            target_platforms, ids = self._resolve_target_platforms(all_platforms, platforms)
 
             print(f"开始临时爬取，平台: {[p.get('name', p['id']) for p in target_platforms]}")
 
-            # 爬取数据
-            results = {}
-            id_to_name = {}
-            failed_ids = []
+            # 2. 执行爬取
+            advanced = config_data.get("advanced", {})
+            crawler_config = advanced.get("crawler", {})
+            platforms_config = config_data.get("platforms", {})
+            proxy_url = crawler_config.get("default_proxy") if crawler_config.get("use_proxy") else None
+            api_url = (
+                os.environ.get("PLATFORMS_API_URL", "").strip()
+                or platforms_config.get("api_url", "")
+            ) or None
 
-            for i, id_info in enumerate(ids):
-                if isinstance(id_info, tuple):
-                    id_value, name = id_info
-                else:
-                    id_value = id_info
-                    name = id_value
+            domain_rules = {}
+            for p in target_platforms:
+                ed = p.get("expected_domain", "")
+                if ed:
+                    domain_rules[p["id"]] = ed
 
-                id_to_name[id_value] = name
+            fetcher = DataFetcher(proxy_url=proxy_url, api_url=api_url)
+            results, id_to_name, failed_ids = fetcher.crawl_websites(
+                ids_list=ids,
+                request_interval=crawler_config.get("request_interval", 100),
+                domain_rules=domain_rules,
+            )
 
-                # 构建请求URL
-                url = f"https://newsnow.busiyi.world/api/s?id={id_value}&latest"
+            # 3. 转换与持久化
+            timezone = config_data.get("app", {}).get("timezone", "Asia/Shanghai")
+            current_time = get_configured_time(timezone)
+            crawl_date = format_date_folder(None, timezone)
+            crawl_time_str = format_time_filename(timezone)
 
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "application/json, text/plain, */*",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                    "Connection": "keep-alive",
-                    "Cache-Control": "no-cache",
-                }
+            news_data = convert_crawl_results_to_news_data(
+                results=results, id_to_name=id_to_name,
+                failed_ids=failed_ids, crawl_time=crawl_time_str, crawl_date=crawl_date
+            )
 
-                # 重试机制
-                max_retries = 2
-                retries = 0
-                success = False
+            storage = LocalStorageBackend(
+                data_dir=str(self.project_root / "output"),
+                enable_txt=True, enable_html=True, timezone=timezone
+            )
 
-                while retries <= max_retries and not success:
-                    try:
-                        response = requests.get(url, headers=headers, timeout=10)
-                        response.raise_for_status()
+            try:
+                save_success, save_error_msg, saved_files = self._persist_crawl_data(
+                    storage, news_data, save_to_local, results, id_to_name, failed_ids, current_time, crawl_time_str
+                )
+            finally:
+                get_cache().clear()
+                print("[System] 缓存已清除")
+                storage.cleanup()
 
-                        data_text = response.text
-                        data_json = json.loads(data_text)
-
-                        status = data_json.get("status", "未知")
-                        if status not in ["success", "cache"]:
-                            raise ValueError(f"响应状态异常: {status}")
-
-                        status_info = "最新数据" if status == "success" else "缓存数据"
-                        print(f"获取 {id_value} 成功（{status_info}）")
-
-                        # 解析数据
-                        results[id_value] = {}
-                        for index, item in enumerate(data_json.get("items", []), 1):
-                            title = item["title"]
-                            url_link = item.get("url", "")
-                            mobile_url = item.get("mobileUrl", "")
-
-                            if title in results[id_value]:
-                                results[id_value][title]["ranks"].append(index)
-                            else:
-                                results[id_value][title] = {
-                                    "ranks": [index],
-                                    "url": url_link,
-                                    "mobileUrl": mobile_url,
-                                }
-
-                        success = True
-
-                    except Exception as e:
-                        retries += 1
-                        if retries <= max_retries:
-                            wait_time = random.uniform(3, 5)
-                            print(f"请求 {id_value} 失败: {e}. {wait_time:.2f}秒后重试...")
-                            time.sleep(wait_time)
-                        else:
-                            print(f"请求 {id_value} 失败: {e}")
-                            failed_ids.append(id_value)
-
-                # 请求间隔
-                if i < len(ids) - 1:
-                    actual_interval = request_interval + random.randint(-10, 20)
-                    actual_interval = max(50, actual_interval)
-                    time.sleep(actual_interval / 1000)
-
-            # 格式化返回数据
-            news_data = []
-            for platform_id, titles_data in results.items():
-                platform_name = id_to_name.get(platform_id, platform_id)
-                for title, info in titles_data.items():
-                    news_item = {
-                        "platform_id": platform_id,
-                        "platform_name": platform_name,
-                        "title": title,
-                        "ranks": info["ranks"]
-                    }
-
-                    # 条件性添加 URL 字段
-                    if include_url:
-                        news_item["url"] = info.get("url", "")
-                        news_item["mobile_url"] = info.get("mobileUrl", "")
-
-                    news_data.append(news_item)
-
-            # 获取北京时间
-            beijing_tz = pytz.timezone("Asia/Shanghai")
-            now = datetime.now(beijing_tz)
-
-            # 构建返回结果
-            result = {
-                "success": True,
-                "task_id": f"crawl_{int(time.time())}",
-                "status": "completed",
-                "crawl_time": now.strftime("%Y-%m-%d %H:%M:%S"),
-                "platforms": list(results.keys()),
-                "total_news": len(news_data),
-                "failed_platforms": failed_ids,
-                "data": news_data,
-                "saved_to_local": save_to_local
-            }
-
-            # 如果需要持久化，调用保存逻辑
-            if save_to_local:
-                try:
-                    import re
-
-                    # 辅助函数：清理标题
-                    def clean_title(title: str) -> str:
-                        """清理标题中的特殊字符"""
-                        if not isinstance(title, str):
-                            title = str(title)
-                        cleaned_title = title.replace("\n", " ").replace("\r", " ")
-                        cleaned_title = re.sub(r"\s+", " ", cleaned_title)
-                        cleaned_title = cleaned_title.strip()
-                        return cleaned_title
-
-                    # 辅助函数：创建目录
-                    def ensure_directory_exists(directory: str):
-                        """确保目录存在"""
-                        Path(directory).mkdir(parents=True, exist_ok=True)
-
-                    # 格式化日期和时间
-                    date_folder = now.strftime("%Y年%m月%d日")
-                    time_filename = now.strftime("%H时%M分")
-
-                    # 创建 txt 文件路径
-                    txt_dir = self.project_root / "output" / date_folder / "txt"
-                    ensure_directory_exists(str(txt_dir))
-                    txt_file_path = txt_dir / f"{time_filename}.txt"
-
-                    # 创建 html 文件路径
-                    html_dir = self.project_root / "output" / date_folder / "html"
-                    ensure_directory_exists(str(html_dir))
-                    html_file_path = html_dir / f"{time_filename}.html"
-
-                    # 保存 txt 文件（按照 main.py 的格式）
-                    with open(txt_file_path, "w", encoding="utf-8") as f:
-                        for id_value, title_data in results.items():
-                            # id | name 或 id
-                            name = id_to_name.get(id_value)
-                            if name and name != id_value:
-                                f.write(f"{id_value} | {name}\n")
-                            else:
-                                f.write(f"{id_value}\n")
-
-                            # 按排名排序标题
-                            sorted_titles = []
-                            for title, info in title_data.items():
-                                cleaned = clean_title(title)
-                                if isinstance(info, dict):
-                                    ranks = info.get("ranks", [])
-                                    url = info.get("url", "")
-                                    mobile_url = info.get("mobileUrl", "")
-                                else:
-                                    ranks = info if isinstance(info, list) else []
-                                    url = ""
-                                    mobile_url = ""
-
-                                rank = ranks[0] if ranks else 1
-                                sorted_titles.append((rank, cleaned, url, mobile_url))
-
-                            sorted_titles.sort(key=lambda x: x[0])
-
-                            for rank, cleaned, url, mobile_url in sorted_titles:
-                                line = f"{rank}. {cleaned}"
-                                if url:
-                                    line += f" [URL:{url}]"
-                                if mobile_url:
-                                    line += f" [MOBILE:{mobile_url}]"
-                                f.write(line + "\n")
-
-                            f.write("\n")
-
-                        if failed_ids:
-                            f.write("==== 以下ID请求失败 ====\n")
-                            for id_value in failed_ids:
-                                f.write(f"{id_value}\n")
-
-                    # 保存 html 文件（简化版）
-                    html_content = self._generate_simple_html(results, id_to_name, failed_ids, now)
-                    with open(html_file_path, "w", encoding="utf-8") as f:
-                        f.write(html_content)
-
-                    print(f"数据已保存到:")
-                    print(f"  TXT: {txt_file_path}")
-                    print(f"  HTML: {html_file_path}")
-
-                    result["saved_files"] = {
-                        "txt": str(txt_file_path),
-                        "html": str(html_file_path)
-                    }
-                    result["note"] = "数据已持久化到 output 文件夹"
-
-                except Exception as e:
-                    print(f"保存文件失败: {e}")
-                    result["save_error"] = str(e)
-                    result["note"] = "爬取成功但保存失败，数据仅在内存中"
-            else:
-                result["note"] = "临时爬取结果，未持久化到output文件夹"
-
-            return result
+            # 4. 构建响应
+            return self._build_crawl_response(
+                results, id_to_name, failed_ids, current_time, include_url,
+                save_success, save_to_local, save_error_msg, saved_files
+            )
 
         except MCPError as e:
-            return {
-                "success": False,
-                "error": e.to_dict()
-            }
+            return {"success": False, "error": e.to_dict()}
         except Exception as e:
             import traceback
             return {
@@ -463,3 +381,177 @@ class SystemManagementTools:
             .replace('"', "&quot;")
             .replace("'", "&#x27;")
         )
+
+    def check_version(self, proxy_url: Optional[str] = None) -> Dict:
+        """
+        检查版本更新
+
+        同时检查 TrendRadar 和 MCP Server 两个组件的版本更新。
+        远程版本 URL 从 config.yaml 获取：
+        - version_check_url: TrendRadar 版本
+        - mcp_version_check_url: MCP Server 版本
+
+        Args:
+            proxy_url: 可选的代理URL，用于访问远程版本
+
+        Returns:
+            版本检查结果字典，包含：
+            - success: 是否成功
+            - trendradar: TrendRadar 版本检查结果
+            - mcp: MCP Server 版本检查结果
+            - any_update: 是否有任何组件需要更新
+
+        Example:
+            >>> tools = SystemManagementTools()
+            >>> result = tools.check_version()
+            >>> print(result['data']['any_update'])
+        """
+        import yaml
+        import requests
+
+        def parse_version(version_str: str):
+            """将版本号字符串解析为元组"""
+            try:
+                parts = version_str.strip().split(".")
+                if len(parts) != 3:
+                    raise ValueError("版本号格式不正确")
+                return int(parts[0]), int(parts[1]), int(parts[2])
+            except (ValueError, AttributeError, TypeError):
+                return 0, 0, 0
+
+        def check_single_version(
+            name: str,
+            local_version: str,
+            remote_url: str,
+            proxies: Optional[Dict],
+            headers: Dict
+        ) -> Dict:
+            """检查单个组件的版本（支持 CDN 多源回退）"""
+            try:
+                from trendradar.core.cdn import fetch_with_fallback
+                proxy_url = None
+                if proxies:
+                    proxy_url = proxies.get("https") or proxies.get("http")
+                remote_version = fetch_with_fallback(remote_url, proxy_url)
+
+                if not remote_version:
+                    return {
+                        "success": False,
+                        "name": name,
+                        "current_version": local_version,
+                        "error": "所有版本检查源均不可用"
+                    }
+
+                local_tuple = parse_version(local_version)
+                remote_tuple = parse_version(remote_version)
+                need_update = local_tuple < remote_tuple
+
+                if need_update:
+                    message = f"发现新版本 {remote_version}，当前版本 {local_version}，建议更新"
+                elif local_tuple > remote_tuple:
+                    message = f"当前版本 {local_version} 高于远程版本 {remote_version}（可能是开发版本）"
+                else:
+                    message = f"当前版本 {local_version} 已是最新版本"
+
+                return {
+                    "success": True,
+                    "name": name,
+                    "current_version": local_version,
+                    "remote_version": remote_version,
+                    "need_update": need_update,
+                    "current_parsed": list(local_tuple),
+                    "remote_parsed": list(remote_tuple),
+                    "message": message
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "name": name,
+                    "current_version": local_version,
+                    "error": str(e)
+                }
+
+        try:
+            # 导入本地版本
+            from trendradar import __version__ as trendradar_version
+            from mcp_server import __version__ as mcp_version
+
+            # 从配置文件获取远程版本 URL
+            config_path = self.project_root / "config" / "config.yaml"
+            if not config_path.exists():
+                return {
+                    "success": False,
+                    "error": {
+                        "code": "CONFIG_NOT_FOUND",
+                        "message": f"配置文件不存在: {config_path}"
+                    }
+                }
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f)
+
+            advanced_config = config_data.get("advanced", {})
+            trendradar_url = advanced_config.get(
+                "version_check_url",
+                "https://raw.githubusercontent.com/sansan0/TrendRadar/refs/heads/master/version"
+            )
+            mcp_url = advanced_config.get(
+                "mcp_version_check_url",
+                "https://raw.githubusercontent.com/sansan0/TrendRadar/refs/heads/master/version_mcp"
+            )
+
+            # 配置代理
+            proxies = None
+            if proxy_url:
+                proxies = {"http": proxy_url, "https": proxy_url}
+
+            # 请求头
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "text/plain, */*",
+                "Cache-Control": "no-cache",
+            }
+
+            # 检查两个版本
+            trendradar_result = check_single_version(
+                "TrendRadar", trendradar_version, trendradar_url, proxies, headers
+            )
+            mcp_result = check_single_version(
+                "MCP Server", mcp_version, mcp_url, proxies, headers
+            )
+
+            # 判断是否有任何更新
+            any_update = (
+                (trendradar_result.get("success") and trendradar_result.get("need_update", False)) or
+                (mcp_result.get("success") and mcp_result.get("need_update", False))
+            )
+
+            return {
+                "success": True,
+                "summary": {
+                    "description": "版本检查结果（TrendRadar + MCP Server）",
+                    "any_update": any_update
+                },
+                "data": {
+                    "trendradar": trendradar_result,
+                    "mcp": mcp_result,
+                    "any_update": any_update
+                }
+            }
+
+        except ImportError as e:
+            return {
+                "success": False,
+                "error": {
+                    "code": "IMPORT_ERROR",
+                    "message": f"无法导入版本信息: {str(e)}"
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": str(e)
+                }
+            }
