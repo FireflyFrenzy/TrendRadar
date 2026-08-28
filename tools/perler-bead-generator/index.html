@@ -266,11 +266,19 @@
 
   .hidden { display: none !important; }
 
+  .print-page { margin-bottom: 18px; }
+  .print-page-label { font-size: 12.5px; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+  .print-page canvas { border: 1px solid var(--border); max-width: 100%; height: auto; }
+
   @media print {
     .no-print { display: none !important; }
     body { background: #fff; padding: 0; }
     .step { box-shadow: none; border: none; }
     .canvas-wrap { max-height: none; overflow: visible; border: none; background: #fff; }
+    .paginated #mainPreviewStep { display: none; }
+    .print-page { page-break-after: always; break-after: page; margin-bottom: 0; }
+    .print-page:last-child { page-break-after: auto; break-after: auto; }
+    .print-page canvas { max-width: 100%; }
   }
 </style>
 </head>
@@ -307,32 +315,15 @@
   <!-- Step 2 -->
   <div class="step no-print">
     <div class="step-head"><span class="step-num">2</span><h2>选择图案大小</h2></div>
-    <div class="tiles" id="sizeTiles">
-      <div class="tile" data-size="22">
-        <div class="dots" style="grid-template-columns: repeat(4, 4px);">
-          <span></span><span></span><span></span><span></span>
-          <span></span><span></span><span></span><span></span>
-        </div>
-        <div class="tile-name">小</div>
-        <div class="tile-desc">拼得快，适合新手</div>
-      </div>
-      <div class="tile active" data-size="40">
-        <div class="dots" style="grid-template-columns: repeat(6, 4px);">
-          <span></span><span></span><span></span><span></span><span></span><span></span>
-          <span></span><span></span><span></span><span></span><span></span><span></span>
-        </div>
-        <div class="tile-name">中</div>
-        <div class="tile-desc">推荐，效果均衡</div>
-      </div>
-      <div class="tile" data-size="60">
-        <div class="dots" style="grid-template-columns: repeat(8, 4px);">
-          <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-          <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-        </div>
-        <div class="tile-name">大</div>
-        <div class="tile-desc">细节多，更耗豆</div>
-      </div>
+
+    <div class="color-pack-head" style="margin-top:0;">在家用什么纸打印</div>
+    <div class="mode-switch" id="paperSwitch">
+      <button type="button" class="mode-btn active" data-paper="a4">A4（家用最常见）</button>
+      <button type="button" class="mode-btn" data-paper="a3">A3（更大幅面）</button>
     </div>
+
+    <div class="tiles" id="sizeTiles"></div>
+    <div class="tip" id="pageEstimateTip" style="margin-top:0;"></div>
 
     <div class="color-pack-head">用哪套色卡</div>
     <div class="mode-switch" id="paletteSourceSwitch">
@@ -429,7 +420,7 @@
       <div class="adaptation-notes" id="adaptationNotes"></div>
     </div>
 
-    <div class="step">
+    <div class="step" id="mainPreviewStep">
       <div class="pill-row" id="pillRow"></div>
 
       <div class="btn-row no-print">
@@ -443,6 +434,12 @@
       <div class="canvas-wrap" id="canvasWrap">
         <canvas id="patternCanvas"></canvas>
       </div>
+    </div>
+
+    <div class="step" id="printPagesStep" style="display:none;">
+      <div class="step-head"><span class="step-num">📄</span><h2>打印分页</h2></div>
+      <div class="note" style="margin-top:0;">图纸比一张纸大，打印时会自动拆成下面这几页；每页之间留了带阴影的重叠区，剪掉或对齐重叠区就能把几张纸拼成完整图纸。</div>
+      <div id="printPagesContainer"></div>
     </div>
 
     <div class="step">
@@ -1006,6 +1003,40 @@
   var imgAspect = 1;
   var selectedTileSize = 40;
   var selectedColorCount = 24;
+  // Standard 2.6mm bead pitch (matches the "2.6mm" printed on MARD's own
+  // 221-color chart) - used only to estimate real-world print size and
+  // page counts, never to claim exact 1:1 physical-scale printing (browser
+  // print scaling/"fit to page" settings are too inconsistent to promise
+  // that reliably).
+  var BEAD_PITCH_MM = 2.6;
+  // capacityW/H: comfortable single-sheet cell counts per axis, leaving
+  // room for margins, the title, and the color legend below the grid.
+  var PAPER_PRESETS = {
+    a4: {
+      label: "A4", capacityW: 70, capacityH: 90,
+      tiles: [
+        { size: 32, tag: "轻松" },
+        { size: 40, tag: "推荐" },
+        { size: 50, tag: "精细" }
+      ]
+    },
+    a3: {
+      label: "A3", capacityW: 100, capacityH: 130,
+      tiles: [
+        { size: 60, tag: "轻松" },
+        { size: 80, tag: "推荐" },
+        { size: 100, tag: "精细" }
+      ]
+    }
+  };
+  var selectedPaper = "a4";
+  function computePages(w, h, paperKey) {
+    var p = PAPER_PRESETS[paperKey];
+    var pagesX = Math.ceil(w / p.capacityW);
+    var pagesY = Math.ceil(h / p.capacityH);
+    return { pagesX: pagesX, pagesY: pagesY, total: pagesX * pagesY };
+  }
+
   var colorMode = "auto"; // "auto" (pick best N colors) or "manual" (only colors the user checked)
   var selectedCustomColors = {}; // code -> true
   var paletteSource = "generic"; // "generic" (96-color reference set) or "mard" (MARD 221 standard reference)
@@ -1037,6 +1068,8 @@
   var legendBody = document.getElementById("legendBody");
   var pillRow = document.getElementById("pillRow");
   var sizeTiles = document.getElementById("sizeTiles");
+  var paperSwitch = document.getElementById("paperSwitch");
+  var pageEstimateTip = document.getElementById("pageEstimateTip");
   var colorTiles = document.getElementById("colorTiles");
   var colorModeSwitch = document.getElementById("colorModeSwitch");
   var paletteSourceSwitch = document.getElementById("paletteSourceSwitch");
@@ -1049,7 +1082,24 @@
   var adaptationPercent = document.getElementById("adaptationPercent");
   var adaptationNotes = document.getElementById("adaptationNotes");
 
-  // ---------- Size tiles ----------
+  // ---------- Paper size + size tiles ----------
+  function buildSizeTiles(paperKey) {
+    var preset = PAPER_PRESETS[paperKey];
+    sizeTiles.innerHTML = "";
+    preset.tiles.forEach(function (t, i) {
+      var cm = ((t.size * BEAD_PITCH_MM) / 10).toFixed(1);
+      var tile = document.createElement("div");
+      tile.className = "tile" + (t.tag === "推荐" ? " active" : "");
+      tile.setAttribute("data-size", t.size);
+      tile.innerHTML =
+        '<div class="tile-name">' + t.size + '×' + t.size + '</div>' +
+        '<div class="tile-desc">' + t.tag + ' · 约' + cm + '×' + cm + 'cm</div>';
+      sizeTiles.appendChild(tile);
+      if (t.tag === "推荐") selectedTileSize = t.size;
+    });
+  }
+  buildSizeTiles(selectedPaper);
+
   sizeTiles.addEventListener("click", function (e) {
     var tile = e.target.closest(".tile");
     if (!tile) return;
@@ -1057,7 +1107,37 @@
     tile.classList.add("active");
     selectedTileSize = parseInt(tile.getAttribute("data-size"), 10);
     applyTileSize();
+    updatePageEstimateTip();
   });
+
+  paperSwitch.addEventListener("click", function (e) {
+    var btn = e.target.closest(".mode-btn");
+    if (!btn) return;
+    selectedPaper = btn.getAttribute("data-paper");
+    Array.prototype.forEach.call(paperSwitch.querySelectorAll(".mode-btn"), function (b) {
+      b.classList.toggle("active", b === btn);
+    });
+    buildSizeTiles(selectedPaper);
+    applyTileSize();
+    updatePrintPageCss();
+    updatePageEstimateTip();
+  });
+
+  function updatePageEstimateTip() {
+    var w = parseInt(gridWInput.value, 10) || 0;
+    var h = parseInt(gridHInput.value, 10) || 0;
+    if (!w || !h) { pageEstimateTip.textContent = ""; return; }
+    var pages = computePages(w, h, selectedPaper);
+    var cmW = ((w * BEAD_PITCH_MM) / 10).toFixed(1);
+    var cmH = ((h * BEAD_PITCH_MM) / 10).toFixed(1);
+    var paperLabel = PAPER_PRESETS[selectedPaper].label;
+    if (pages.total <= 1) {
+      pageEstimateTip.textContent = w + '×' + h + ' 格 · 约 ' + cmW + '×' + cmH + 'cm · 一张' + paperLabel + '纸能打下';
+    } else {
+      pageEstimateTip.textContent = w + '×' + h + ' 格 · 约 ' + cmW + '×' + cmH + 'cm · 图纸较大，打印时会自动分成 ' +
+        pages.pagesX + '×' + pages.pagesY + ' = ' + pages.total + ' 张' + paperLabel + '纸拼接（留了重叠边方便对齐）';
+    }
+  }
 
   // ---------- Color pack tiles ----------
   colorTiles.addEventListener("click", function (e) {
@@ -1151,7 +1231,16 @@
     } else {
       gridHInput.value = selectedTileSize;
     }
+    updatePageEstimateTip();
   }
+
+  var printPageStyleTag = document.createElement("style");
+  document.head.appendChild(printPageStyleTag);
+  function updatePrintPageCss() {
+    var size = selectedPaper === "a3" ? "A3" : "A4";
+    printPageStyleTag.textContent = "@page { size: " + size + " portrait; margin: 12mm; }";
+  }
+  updatePrintPageCss();
 
   // ---------- Upload handling ----------
   dropzone.addEventListener("click", function () { fileInput.click(); });
@@ -1193,18 +1282,21 @@
       var w = parseInt(gridWInput.value, 10) || 1;
       gridHInput.value = Math.max(1, Math.round(w / imgAspect));
     }
+    updatePageEstimateTip();
   });
   gridHInput.addEventListener("input", function () {
     if (lockAspect.checked && img) {
       var h = parseInt(gridHInput.value, 10) || 1;
       gridWInput.value = Math.max(1, Math.round(h * imgAspect));
     }
+    updatePageEstimateTip();
   });
   boardPreset.addEventListener("change", function () {
     if (!boardPreset.value) return;
     var n = parseInt(boardPreset.value, 10);
     gridWInput.value = n;
     gridHInput.value = (lockAspect.checked && img) ? Math.max(1, Math.round(n / imgAspect)) : n;
+    updatePageEstimateTip();
   });
 
   // ---------- Generation ----------
@@ -1270,10 +1362,72 @@
     blackWhiteMode = false;
     document.getElementById("toggleModeBtn").textContent = "🖨 切换黑白省墨版";
     render();
+    updatePrintPages();
 
     emptyStep.classList.add("hidden");
     resultSection.classList.remove("hidden");
     resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // A 2-cell overlap band is shared with each neighboring page tile so
+  // the printed sheets can be visually aligned; it's shaded here so it
+  // reads as "this margin belongs to the next sheet too", not as part of
+  // the counted pattern.
+  var PAGE_OVERLAP = 2;
+  function tileBounds(pageIndex, totalPages, capacity, total) {
+    var start = pageIndex * capacity;
+    var end = Math.min(total, start + capacity);
+    var x0 = pageIndex > 0 ? Math.max(0, start - PAGE_OVERLAP) : 0;
+    var x1 = pageIndex < totalPages - 1 ? Math.min(total, end + PAGE_OVERLAP) : total;
+    return { x0: x0, x1: x1 };
+  }
+
+  function updatePrintPages() {
+    var pages = computePages(gridW, gridH, selectedPaper);
+    var printPagesStep = document.getElementById("printPagesStep");
+    var container = document.getElementById("printPagesContainer");
+    container.innerHTML = "";
+
+    if (pages.total <= 1) {
+      printPagesStep.style.display = "none";
+      resultSection.classList.remove("paginated");
+      return;
+    }
+
+    resultSection.classList.add("paginated");
+    printPagesStep.style.display = "block";
+    var cell = cellPixelSize(gridW, gridH);
+
+    for (var py = 0; py < pages.pagesY; py++) {
+      var yb = tileBounds(py, pages.pagesY, PAPER_PRESETS[selectedPaper].capacityH, gridH);
+      for (var px = 0; px < pages.pagesX; px++) {
+        var xb = tileBounds(px, pages.pagesX, PAPER_PRESETS[selectedPaper].capacityW, gridW);
+        var w = xb.x1 - xb.x0, h = yb.x1 - yb.x0;
+
+        var wrap = document.createElement("div");
+        wrap.className = "print-page";
+        var pageNum = py * pages.pagesX + px + 1;
+        var label = document.createElement("div");
+        label.className = "print-page-label";
+        label.textContent = "第 " + pageNum + " 页 / 共 " + pages.total + " 页 · 第" + (py + 1) + "行第" + (px + 1) + "列";
+        wrap.appendChild(label);
+
+        var pageCanvas = document.createElement("canvas");
+        var pageCtx = pageCanvas.getContext("2d");
+        drawGridRegion(pageCtx, cell, xb.x0, yb.x0, w, h);
+
+        // Shade the shared overlap band on whichever edges border a
+        // neighboring tile (not on the pattern's outer boundary).
+        pageCtx.fillStyle = "rgba(232, 87, 122, 0.16)";
+        if (px > 0) pageCtx.fillRect(0, 0, PAGE_OVERLAP * cell, h * cell);
+        if (px < pages.pagesX - 1) pageCtx.fillRect((w - PAGE_OVERLAP) * cell, 0, PAGE_OVERLAP * cell, h * cell);
+        if (py > 0) pageCtx.fillRect(0, 0, w * cell, PAGE_OVERLAP * cell);
+        if (py < pages.pagesY - 1) pageCtx.fillRect(0, (h - PAGE_OVERLAP) * cell, w * cell, PAGE_OVERLAP * cell);
+
+        wrap.appendChild(pageCanvas);
+        container.appendChild(wrap);
+      }
+    }
   }
 
   // How well the user's own checked colors can reproduce this photo,
@@ -1390,59 +1544,76 @@
   }
 
   // ---------- Rendering ----------
-  function render() {
-    var maxCanvasWidth = 1200;
-    var cell = Math.max(6, Math.min(30, Math.floor(maxCanvasWidth / gridW)));
-    canvas.width = gridW * cell;
-    canvas.height = gridH * cell;
+  // Draws the sub-rectangle [x0, x0+w) x [y0, y0+h) of gridColors onto any
+  // canvas context, at the given cell pixel size. Shared by the main
+  // preview (the whole grid, one "region") and each print-page tile (a
+  // cropped region) so they render identically.
+  function drawGridRegion(targetCtx, cell, x0, y0, w, h) {
+    targetCtx.canvas.width = w * cell;
+    targetCtx.canvas.height = h * cell;
 
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    targetCtx.fillStyle = "#ffffff";
+    targetCtx.fillRect(0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
 
-    for (var y = 0; y < gridH; y++) {
-      for (var x = 0; x < gridW; x++) {
-        var c = gridColors[y][x];
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var c = gridColors[y0 + y][x0 + x];
         if (!c) continue;
         if (blackWhiteMode) {
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(x * cell, y * cell, cell, cell);
-          ctx.strokeStyle = "#999999";
-          ctx.strokeRect(x * cell + 0.5, y * cell + 0.5, cell - 1, cell - 1);
-          ctx.fillStyle = "#111111";
-          ctx.font = Math.max(7, cell * 0.5) + "px sans-serif";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(c._symbol || "", x * cell + cell / 2, y * cell + cell / 2 + 1);
+          targetCtx.fillStyle = "#ffffff";
+          targetCtx.fillRect(x * cell, y * cell, cell, cell);
+          targetCtx.strokeStyle = "#999999";
+          targetCtx.strokeRect(x * cell + 0.5, y * cell + 0.5, cell - 1, cell - 1);
+          targetCtx.fillStyle = "#111111";
+          targetCtx.font = Math.max(7, cell * 0.5) + "px sans-serif";
+          targetCtx.textAlign = "center";
+          targetCtx.textBaseline = "middle";
+          targetCtx.fillText(c._symbol || "", x * cell + cell / 2, y * cell + cell / 2 + 1);
         } else {
-          ctx.fillStyle = c.hex;
-          ctx.fillRect(x * cell, y * cell, cell, cell);
+          targetCtx.fillStyle = c.hex;
+          targetCtx.fillRect(x * cell, y * cell, cell, cell);
         }
       }
     }
 
-    ctx.strokeStyle = "rgba(0,0,0,0.15)";
-    ctx.lineWidth = 1;
-    for (var gx = 0; gx <= gridW; gx++) {
-      ctx.beginPath(); ctx.moveTo(gx * cell + 0.5, 0); ctx.lineTo(gx * cell + 0.5, canvas.height); ctx.stroke();
+    targetCtx.strokeStyle = "rgba(0,0,0,0.15)";
+    targetCtx.lineWidth = 1;
+    for (var gx = 0; gx <= w; gx++) {
+      targetCtx.beginPath(); targetCtx.moveTo(gx * cell + 0.5, 0); targetCtx.lineTo(gx * cell + 0.5, targetCtx.canvas.height); targetCtx.stroke();
     }
-    for (var gy = 0; gy <= gridH; gy++) {
-      ctx.beginPath(); ctx.moveTo(0, gy * cell + 0.5); ctx.lineTo(canvas.width, gy * cell + 0.5); ctx.stroke();
+    for (var gy = 0; gy <= h; gy++) {
+      targetCtx.beginPath(); targetCtx.moveTo(0, gy * cell + 0.5); targetCtx.lineTo(targetCtx.canvas.width, gy * cell + 0.5); targetCtx.stroke();
     }
 
-    ctx.strokeStyle = "rgba(0,0,0,0.55)";
-    ctx.lineWidth = 2;
-    for (var tx = 0; tx <= gridW; tx += 10) {
-      ctx.beginPath(); ctx.moveTo(tx * cell, 0); ctx.lineTo(tx * cell, canvas.height); ctx.stroke();
+    targetCtx.strokeStyle = "rgba(0,0,0,0.55)";
+    targetCtx.lineWidth = 2;
+    for (var tx = 0; tx <= w; tx += 10) {
+      var absTx = x0 + tx;
+      if (absTx % 10 !== 0) continue; // keep the every-10 marker lines aligned to the whole pattern's grid, not each tile's own local origin
+      targetCtx.beginPath(); targetCtx.moveTo(tx * cell, 0); targetCtx.lineTo(tx * cell, targetCtx.canvas.height); targetCtx.stroke();
     }
-    for (var ty = 0; ty <= gridH; ty += 10) {
-      ctx.beginPath(); ctx.moveTo(0, ty * cell); ctx.lineTo(canvas.width, ty * cell); ctx.stroke();
+    for (var ty = 0; ty <= h; ty += 10) {
+      var absTy = y0 + ty;
+      if (absTy % 10 !== 0) continue;
+      targetCtx.beginPath(); targetCtx.moveTo(0, ty * cell); targetCtx.lineTo(targetCtx.canvas.width, ty * cell); targetCtx.stroke();
     }
+  }
+
+  function cellPixelSize(w, h) {
+    var maxCanvasWidth = 1200;
+    return Math.max(6, Math.min(30, Math.floor(maxCanvasWidth / Math.max(w, h))));
+  }
+
+  function render() {
+    var cell = cellPixelSize(gridW, gridH);
+    drawGridRegion(ctx, cell, 0, 0, gridW, gridH);
   }
 
   document.getElementById("toggleModeBtn").addEventListener("click", function () {
     blackWhiteMode = !blackWhiteMode;
     this.textContent = blackWhiteMode ? "🎨 切换彩色版" : "🖨 切换黑白省墨版";
     render();
+    updatePrintPages();
   });
 
   // Single save path for every export: routes through the Artifact preview's
