@@ -123,8 +123,11 @@
   .drop-sub { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
   .tip { font-size: 12px; color: var(--muted); margin-top: 12px; }
 
+  .color-pack-head { font-size: 13.5px; font-weight: 700; margin: 18px 0 4px; }
+
   /* size tiles */
-  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .tiles.four-col { grid-template-columns: repeat(4, 1fr); }
   .tile {
     border: 2px solid var(--border);
     border-radius: 14px;
@@ -292,8 +295,29 @@
       </div>
     </div>
 
+    <div class="color-pack-head">买几色装的拼豆？</div>
+    <div class="tip" style="margin-top:0;">网上买的拼豆一般是 24/48/72/96 色一整盒，图纸最多用这么多种颜色，照着买正好用得上，不会多买或者缺色。</div>
+    <div class="tiles four-col" id="colorTiles">
+      <div class="tile active" data-colors="24">
+        <div class="tile-name">24色</div>
+        <div class="tile-desc">入门装</div>
+      </div>
+      <div class="tile" data-colors="48">
+        <div class="tile-name">48色</div>
+        <div class="tile-desc">更丰富</div>
+      </div>
+      <div class="tile" data-colors="72">
+        <div class="tile-name">72色</div>
+        <div class="tile-desc">细节多</div>
+      </div>
+      <div class="tile" data-colors="96">
+        <div class="tile-name">96色</div>
+        <div class="tile-desc">最精细</div>
+      </div>
+    </div>
+
     <details class="adv">
-      <summary>自定义尺寸和颜色数量（一般不用改）</summary>
+      <summary>自定义尺寸（一般不用改）</summary>
       <div class="adv-body">
         <div class="field">
           <label>图案格数（宽 × 高，单位：颗豆子）</label>
@@ -305,10 +329,6 @@
         <div class="checkbox-row">
           <input type="checkbox" id="lockAspect" checked>
           <label style="margin:0;" for="lockAspect">保持照片原始比例</label>
-        </div>
-        <div class="field">
-          <label>最多用几种颜色的豆子</label>
-          <input type="number" id="maxColors" min="2" max="60" value="24">
         </div>
         <div class="checkbox-row">
           <input type="checkbox" id="smartOptimize" checked>
@@ -438,7 +458,53 @@
     {code:"C47", name:"卡其色", hex:"#C3B091"},
     {code:"C48", name:"驼色", hex:"#B79A76"},
     {code:"C49", name:"珊瑚橙", hex:"#FF7F6B"},
-    {code:"C50", name:"浅青灰", hex:"#A9C0C9"}
+    {code:"C50", name:"浅青灰", hex:"#A9C0C9"},
+    {code:"C51", name:"珍珠白", hex:"#FBFBF8"},
+    {code:"C52", name:"暖灰", hex:"#B8ADA3"},
+    {code:"C53", name:"冷灰", hex:"#A6ADB3"},
+    {code:"C54", name:"炭灰", hex:"#3A3A3A"},
+    {code:"C55", name:"浅杏色", hex:"#F6DEC8"},
+    {code:"C56", name:"杏色", hex:"#EFC49A"},
+    {code:"C57", name:"焦糖色", hex:"#B87E4A"},
+    {code:"C58", name:"巧克力棕", hex:"#5C3A21"},
+    {code:"C59", name:"摩卡棕", hex:"#6F4E37"},
+    {code:"C60", name:"沙棕色", hex:"#D2B48C"},
+    {code:"C61", name:"深褐", hex:"#3B2412"},
+    {code:"C62", name:"奶油黄", hex:"#FDF0C0"},
+    {code:"C63", name:"芥末黄", hex:"#B8860B"},
+    {code:"C64", name:"杏橙色", hex:"#F2A65A"},
+    {code:"C65", name:"南瓜橙", hex:"#E07A1F"},
+    {code:"C66", name:"浅珊瑚", hex:"#FFB3A3"},
+    {code:"C67", name:"深珊瑚", hex:"#E8654F"},
+    {code:"C68", name:"胭脂红", hex:"#B22245"},
+    {code:"C69", name:"樱桃红", hex:"#D0103A"},
+    {code:"C70", name:"粉紫红", hex:"#D46A9F"},
+    {code:"C71", name:"淡紫灰", hex:"#C9BFE0"},
+    {code:"C72", name:"葡萄紫", hex:"#6A3B8C"},
+    {code:"C73", name:"茄紫", hex:"#4B2E5A"},
+    {code:"C74", name:"冰蓝", hex:"#DCEFFA"},
+    {code:"C75", name:"湖蓝", hex:"#3FA9C9"},
+    {code:"C76", name:"靛蓝", hex:"#2A3F8F"},
+    {code:"C77", name:"牛仔蓝", hex:"#4A6FA5"},
+    {code:"C78", name:"午夜蓝", hex:"#14213D"},
+    {code:"C79", name:"浅松石绿", hex:"#A8E0D6"},
+    {code:"C80", name:"松石绿", hex:"#2FB6A3"},
+    {code:"C81", name:"深青色", hex:"#146F63"},
+    {code:"C82", name:"嫩芽绿", hex:"#D4F0A0"},
+    {code:"C83", name:"苹果绿", hex:"#8FCB4D"},
+    {code:"C84", name:"森林绿", hex:"#2F5233"},
+    {code:"C85", name:"墨绿", hex:"#1B3A1B"},
+    {code:"C86", name:"灰绿", hex:"#7C8D6E"},
+    {code:"C87", name:"荧光蓝", hex:"#29E3FF"},
+    {code:"C88", name:"荧光紫", hex:"#C13BFF"},
+    {code:"C89", name:"荧光红", hex:"#FF2E4D"},
+    {code:"C90", name:"金属金", hex:"#D4AF37"},
+    {code:"C91", name:"金属银", hex:"#C0C0C8"},
+    {code:"C92", name:"金属古铜", hex:"#8C5A2B"},
+    {code:"C93", name:"粉蓝", hex:"#C7E5F0"},
+    {code:"C94", name:"粉黄", hex:"#FBEFC0"},
+    {code:"C95", name:"粉绿", hex:"#D8F0D0"},
+    {code:"C96", name:"粉橙", hex:"#FBD8B8"}
   ];
   var PALETTE_BY_CODE = {};
   PALETTE.forEach(function (c) {
@@ -547,6 +613,7 @@
   var blackWhiteMode = false;
   var imgAspect = 1;
   var selectedTileSize = 40;
+  var selectedColorCount = 24;
 
   var symbolAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   function symbolFor(index) {
@@ -564,7 +631,6 @@
   var gridWInput = document.getElementById("gridW");
   var gridHInput = document.getElementById("gridH");
   var lockAspect = document.getElementById("lockAspect");
-  var maxColorsInput = document.getElementById("maxColors");
   var boardPreset = document.getElementById("boardPreset");
   var generateBtn = document.getElementById("generateBtn");
   var canvas = document.getElementById("patternCanvas");
@@ -574,6 +640,7 @@
   var legendBody = document.getElementById("legendBody");
   var pillRow = document.getElementById("pillRow");
   var sizeTiles = document.getElementById("sizeTiles");
+  var colorTiles = document.getElementById("colorTiles");
 
   // ---------- Size tiles ----------
   sizeTiles.addEventListener("click", function (e) {
@@ -583,6 +650,15 @@
     tile.classList.add("active");
     selectedTileSize = parseInt(tile.getAttribute("data-size"), 10);
     applyTileSize();
+  });
+
+  // ---------- Color pack tiles ----------
+  colorTiles.addEventListener("click", function (e) {
+    var tile = e.target.closest(".tile");
+    if (!tile) return;
+    Array.prototype.forEach.call(colorTiles.querySelectorAll(".tile"), function (t) { t.classList.remove("active"); });
+    tile.classList.add("active");
+    selectedColorCount = parseInt(tile.getAttribute("data-colors"), 10);
   });
 
   function applyTileSize() {
@@ -683,8 +759,7 @@
       gridColors.push(row);
     }
 
-    var maxColors = parseInt(maxColorsInput.value, 10);
-    if (maxColors && maxColors > 0) reduceColors(maxColors);
+    reduceColors(selectedColorCount);
     if (smartOptimize) gridColors = despeckle(gridColors, gridW, gridH);
 
     var usage = computeUsage(gridColors, gridW, gridH);
