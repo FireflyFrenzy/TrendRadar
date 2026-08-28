@@ -345,15 +345,15 @@
 
     <div class="color-pack-head">豆子颜色</div>
     <div class="mode-switch" id="colorModeSwitch">
-      <button type="button" class="mode-btn active" data-mode="auto">🤖 智能推荐配色</button>
-      <button type="button" class="mode-btn" data-mode="manual">只用我现有的颜色</button>
+      <button type="button" class="mode-btn active" data-mode="manual">只用我现有的颜色</button>
+      <button type="button" class="mode-btn" data-mode="auto">🤖 还没买豆子？看推荐配色</button>
     </div>
 
-    <div id="autoColorPanel">
-      <div class="tip" style="margin-top:0;">不用自己猜要多少种颜色——点"生成"时会分析这张照片本身的颜色，自动决定用几种、用哪些颜色最合适：颜色本来就接近的会自动合并，色差明显的会保留，尽量做到"够用又不碎"。</div>
+    <div id="autoColorPanel" class="hidden">
+      <div class="tip" style="margin-top:0;">这个模式是给还没买豆子、想先知道大概要买哪些颜色的人用的：生成时会分析这张照片本身的颜色，给一个参考配色方案——只是购买参考，不是必须照买的标准答案，买多买少都可以。</div>
     </div>
 
-    <div id="manualColorPanel" class="hidden">
+    <div id="manualColorPanel">
       <div class="tip" style="margin-top:0;">你有多少颜色，就用多少颜色——图纸只会用到你勾选的豆子，不会出现你没有的颜色。</div>
       <div class="swatch-actions">
         <button type="button" class="btn-secondary" id="selectAllColorsBtn">全选</button>
@@ -419,6 +419,7 @@
   <div class="step no-print">
     <div class="step-head"><span class="step-num">3</span><h2>生成图纸</h2></div>
     <button class="btn-primary" id="generateBtn" disabled>生成我的拼豆图纸</button>
+    <div class="note" id="generateHint"></div>
     <div class="note">照片只会在你的手机/电脑本地处理，不会被上传。</div>
   </div>
 
@@ -1046,7 +1047,12 @@
     return { pagesX: pagesX, pagesY: pagesY, total: pagesX * pagesY };
   }
 
-  var colorMode = "auto"; // "auto" (pick best N colors) or "manual" (only colors the user checked)
+  // "manual" (only colors the user actually has) is the default and primary
+  // path - it's what most people who already own beads want, and it avoids
+  // implying "auto" is the one correct way to configure this. "auto" (let
+  // the photo's own colors suggest a shopping reference) is there for
+  // people who don't have beads yet and want a starting point to buy from.
+  var colorMode = "manual";
   var selectedCustomColors = {}; // code -> true
   var paletteSource = "generic"; // "generic" (96-color reference set) or "mard" (MARD 221 standard reference)
   function activeFullPalette() { return paletteSource === "mard" ? MARD_PALETTE : PALETTE; }
@@ -1216,6 +1222,15 @@
   function updateGenerateButtonState() {
     var manualReady = colorMode !== "manual" || Object.keys(selectedCustomColors).length >= 2;
     generateBtn.disabled = !img || !manualReady;
+
+    var hint = document.getElementById("generateHint");
+    if (!img) {
+      hint.textContent = "";
+    } else if (!manualReady) {
+      hint.textContent = "先在上面勾选（或拍照点选）至少 2 种你有的颜色，再生成；如果还没有豆子，切到「还没买豆子？看推荐配色」就能直接生成。";
+    } else {
+      hint.textContent = "";
+    }
   }
 
   // ---------- Photo color picker: click a spot on a user photo to pick that
