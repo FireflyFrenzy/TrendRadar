@@ -162,6 +162,17 @@
   .adaptation-notes { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
   .adaptation-notes .miss-row { display: flex; align-items: center; gap: 8px; }
 
+  .photo-pick-wrap { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-top: 10px; background: var(--surface-2); }
+  #colorPhotoCanvas { width: 100%; height: auto; display: block; cursor: crosshair; }
+  .photo-pick-feedback { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .photo-pick-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
+    padding: 4px 10px 4px 6px; font-size: 12px; cursor: pointer;
+  }
+  .photo-pick-chip:hover { border-color: var(--accent); }
+  .photo-pick-chip .swatch { width: 14px; height: 14px; }
+
   /* size tiles */
   .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
   .tiles.four-col { grid-template-columns: repeat(4, 1fr); }
@@ -372,9 +383,30 @@
         <span class="swatch-count" id="swatchCount">已选 0 种</span>
       </div>
       <div class="swatch-grid" id="swatchGrid"></div>
+
+      <details class="adv" id="photoPickDetails">
+        <summary>📷 或者：拍照点选取色（拍你的色卡/散豆子）</summary>
+        <div class="adv-body">
+          <div class="tip" style="margin-top:0;">上传一张你自己拼豆颜色的照片，点照片上的颜色块就会自动加进上面的选色面板——不用在一堆色块里翻着找。</div>
+          <div class="dropzone" id="colorPhotoDropzone" style="padding:16px;">
+            <div id="colorPhotoDropInner">
+              <div class="drop-icon">📷</div>
+              <div class="drop-main">点击上传色卡/散豆子照片</div>
+            </div>
+            <input type="file" id="colorPhotoInput" accept="image/*">
+          </div>
+          <div id="colorPhotoPickArea" class="hidden">
+            <div class="tip" style="margin-top:10px;">点击照片上想要的颜色，会自动匹配最接近的色号并加入选色面板；点下面的色块可以撤销。</div>
+            <div class="photo-pick-wrap">
+              <canvas id="colorPhotoCanvas"></canvas>
+            </div>
+            <div class="photo-pick-feedback" id="photoPickFeedback"></div>
+          </div>
+        </div>
+      </details>
     </div>
 
-    <details class="adv">
+    <details class="adv" id="customSizeDetails">
       <summary>自定义尺寸（一般不用改）</summary>
       <div class="adv-body">
         <div class="field">
@@ -1175,6 +1207,7 @@
     selectedCustomColors = {};
     buildSwatchGrid(activeFullPalette());
     updateSwatchCount();
+    resetPhotoPicks();
   });
 
   function buildSwatchGrid(palette) {
@@ -1213,6 +1246,7 @@
     selectedCustomColors = {};
     Array.prototype.forEach.call(swatchGrid.querySelectorAll(".swatch-cell"), function (cell) { cell.classList.remove("selected"); });
     updateSwatchCount();
+    resetPhotoPicks();
   });
   function updateSwatchCount() {
     swatchCount.textContent = "已选 " + Object.keys(selectedCustomColors).length + " 种";
@@ -1222,6 +1256,114 @@
   function updateGenerateButtonState() {
     var manualReady = colorMode !== "manual" || Object.keys(selectedCustomColors).length >= 2;
     generateBtn.disabled = !img || !manualReady;
+  }
+
+  // ---------- Photo color picker: click a spot on a user photo to pick that
+  // pixel's color, match it to the nearest palette entry, and add it to the
+  // manual selection. Not automatic detection - the user points, we just
+  // save them digging through the swatch grid to find the matching code.
+  var colorPhotoImg = null;
+  var colorPhotoCleanCanvas = document.createElement("canvas");
+  var colorPhotoPicks = []; // { x, y, code, hex, name }
+  var colorPhotoDropzone = document.getElementById("colorPhotoDropzone");
+  var colorPhotoInput = document.getElementById("colorPhotoInput");
+  var colorPhotoCanvas = document.getElementById("colorPhotoCanvas");
+  var colorPhotoPickArea = document.getElementById("colorPhotoPickArea");
+  var photoPickFeedback = document.getElementById("photoPickFeedback");
+
+  colorPhotoDropzone.addEventListener("click", function () { colorPhotoInput.click(); });
+  colorPhotoInput.addEventListener("change", function () {
+    var file = colorPhotoInput.files[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      var image = new Image();
+      image.onload = function () {
+        colorPhotoImg = image;
+        colorPhotoPicks = [];
+        var maxW = 700;
+        var scale = Math.min(1, maxW / image.width);
+        var w = Math.round(image.width * scale), h = Math.round(image.height * scale);
+        colorPhotoCanvas.width = w;
+        colorPhotoCanvas.height = h;
+        colorPhotoCleanCanvas.width = w;
+        colorPhotoCleanCanvas.height = h;
+        colorPhotoCleanCanvas.getContext("2d").drawImage(image, 0, 0, w, h);
+        redrawColorPhoto();
+        renderPhotoPickFeedback();
+        colorPhotoPickArea.classList.remove("hidden");
+      };
+      image.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  function redrawColorPhoto() {
+    if (!colorPhotoImg) return;
+    var pctx = colorPhotoCanvas.getContext("2d");
+    pctx.drawImage(colorPhotoCleanCanvas, 0, 0);
+    colorPhotoPicks.forEach(function (p) {
+      pctx.beginPath();
+      pctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+      pctx.fillStyle = p.hex;
+      pctx.fill();
+      pctx.lineWidth = 2;
+      pctx.strokeStyle = "#ffffff";
+      pctx.stroke();
+      pctx.lineWidth = 1;
+      pctx.strokeStyle = "rgba(0,0,0,0.45)";
+      pctx.stroke();
+    });
+  }
+
+  colorPhotoCanvas.addEventListener("click", function (e) {
+    var rect = colorPhotoCanvas.getBoundingClientRect();
+    var x = Math.round((e.clientX - rect.left) * (colorPhotoCanvas.width / rect.width));
+    var y = Math.round((e.clientY - rect.top) * (colorPhotoCanvas.height / rect.height));
+    x = Math.max(0, Math.min(colorPhotoCanvas.width - 1, x));
+    y = Math.max(0, Math.min(colorPhotoCanvas.height - 1, y));
+    var d = colorPhotoCleanCanvas.getContext("2d").getImageData(x, y, 1, 1).data;
+    if (d[3] < 64) return;
+    var lab = rgbToLab(d[0], d[1], d[2]);
+    var matched = nearestPaletteColorLab(lab, activeFullPalette());
+
+    selectedCustomColors[matched.code] = true;
+    var cell = swatchGrid.querySelector('.swatch-cell[data-code="' + matched.code + '"]');
+    if (cell) cell.classList.add("selected");
+    updateSwatchCount();
+
+    colorPhotoPicks.push({ x: x, y: y, code: matched.code, hex: matched.hex, name: matched.name });
+    redrawColorPhoto();
+    renderPhotoPickFeedback();
+  });
+
+  function renderPhotoPickFeedback() {
+    photoPickFeedback.innerHTML = "";
+    var seen = {};
+    colorPhotoPicks.forEach(function (p) { seen[p.code] = p; });
+    Object.keys(seen).forEach(function (code) {
+      var p = seen[code];
+      var chip = document.createElement("span");
+      chip.className = "photo-pick-chip";
+      chip.title = "点击撤销";
+      chip.innerHTML = '<span class="swatch" style="background:' + p.hex + '"></span>' + p.name + '(' + p.code + ') ✕';
+      chip.addEventListener("click", function () {
+        delete selectedCustomColors[code];
+        colorPhotoPicks = colorPhotoPicks.filter(function (pp) { return pp.code !== code; });
+        var cell = swatchGrid.querySelector('.swatch-cell[data-code="' + code + '"]');
+        if (cell) cell.classList.remove("selected");
+        updateSwatchCount();
+        redrawColorPhoto();
+        renderPhotoPickFeedback();
+      });
+      photoPickFeedback.appendChild(chip);
+    });
+  }
+
+  function resetPhotoPicks() {
+    colorPhotoPicks = [];
+    redrawColorPhoto();
+    renderPhotoPickFeedback();
   }
 
   function applyTileSize() {
