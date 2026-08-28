@@ -343,7 +343,9 @@
         <button class="btn-secondary" id="toggleModeBtn">🖨 切换黑白省墨版</button>
         <button class="btn-secondary" id="downloadPngBtn">📥 保存图纸图片</button>
         <button class="btn-secondary" id="printBtn">🖨 打印图纸</button>
+        <button class="btn-secondary" id="downloadFabricBtn">🧵 布料印花高清图</button>
       </div>
+      <div class="note no-print">"布料印花高清图"是去掉网格线、放大到印刷清晰度的纯色块大图，适合拿去做抱枕/包/布料定制印花；拼豆图纸本身请用上面"保存图纸图片"，印花不需要网格线。</div>
 
       <div class="canvas-wrap" id="canvasWrap">
         <canvas id="patternCanvas"></canvas>
@@ -814,17 +816,23 @@
     render();
   });
 
-  document.getElementById("downloadPngBtn").addEventListener("click", function () {
+  // Single save path for every export: routes through the Artifact preview's
+  // downloads capability when present, otherwise the classic anchor-click
+  // download (what runs on the real deployed page, where window.claude
+  // does not exist at all).
+  function saveBlob(filename, blob) {
     if (downloadsCapability) {
-      canvas.toBlob(function (blob) {
-        downloadsCapability.save({ filename: "perler-bead-pattern.png", data: blob }).catch(function () {});
-      }, "image/png");
+      downloadsCapability.save({ filename: filename, data: blob }).catch(function () {});
       return;
     }
     var link = document.createElement("a");
-    link.download = "perler-bead-pattern.png";
-    link.href = canvas.toDataURL("image/png");
+    link.download = filename;
+    link.href = URL.createObjectURL(blob);
     link.click();
+  }
+
+  document.getElementById("downloadPngBtn").addEventListener("click", function () {
+    canvas.toBlob(function (blob) { saveBlob("perler-bead-pattern.png", blob); }, "image/png");
   });
 
   document.getElementById("downloadCsvBtn").addEventListener("click", function () {
@@ -834,14 +842,36 @@
       lines.push([e.symbol, e.color.name, e.color.code, e.color.hex, e.count].join(","));
     });
     var blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-    if (downloadsCapability) {
-      downloadsCapability.save({ filename: "perler-bead-color-list.csv", data: blob }).catch(function () {});
-      return;
+    saveBlob("perler-bead-color-list.csv", blob);
+  });
+
+  // Fabric-print export: the same color grid as the bead pattern, but as
+  // flat solid blocks with no grid lines or symbols, scaled up to a size
+  // usable for actual print-on-fabric services (throw pillows, tote bags,
+  // panel fabric) rather than for counting out beads by hand.
+  var FABRIC_PRINT_TARGET_LONG_SIDE = 3000;
+  function renderFabricPrintBlob(callback) {
+    var longSide = Math.max(gridW, gridH);
+    var cell = Math.max(8, Math.round(FABRIC_PRINT_TARGET_LONG_SIDE / longSide));
+    var fabricCanvas = document.createElement("canvas");
+    fabricCanvas.width = gridW * cell;
+    fabricCanvas.height = gridH * cell;
+    var fctx = fabricCanvas.getContext("2d");
+    fctx.fillStyle = "#ffffff";
+    fctx.fillRect(0, 0, fabricCanvas.width, fabricCanvas.height);
+    for (var y = 0; y < gridH; y++) {
+      for (var x = 0; x < gridW; x++) {
+        var c = gridColors[y][x];
+        if (!c) continue;
+        fctx.fillStyle = c.hex;
+        fctx.fillRect(x * cell, y * cell, cell, cell);
+      }
     }
-    var link = document.createElement("a");
-    link.download = "perler-bead-color-list.csv";
-    link.href = URL.createObjectURL(blob);
-    link.click();
+    fabricCanvas.toBlob(callback, "image/png");
+  }
+
+  document.getElementById("downloadFabricBtn").addEventListener("click", function () {
+    renderFabricPrintBlob(function (blob) { saveBlob("perler-bead-fabric-print.png", blob); });
   });
 
   document.getElementById("printBtn").addEventListener("click", function () {
