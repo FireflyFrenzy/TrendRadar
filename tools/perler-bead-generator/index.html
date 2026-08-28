@@ -310,6 +310,10 @@
           <label>最多用几种颜色的豆子</label>
           <input type="number" id="maxColors" min="2" max="60" value="24">
         </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="smartOptimize" checked>
+          <label style="margin:0;" for="smartOptimize">智能去毛刺（推荐用于人像/宠物照片，让眼睛鼻子更清楚、毛发不花）</label>
+        </div>
         <div class="field">
           <label>常见拼豆板尺寸（可选）</label>
           <select id="boardPreset">
@@ -420,9 +424,11 @@
     {code:"C49", name:"珊瑚橙", hex:"#FF7F6B"},
     {code:"C50", name:"浅青灰", hex:"#A9C0C9"}
   ];
+  var PALETTE_BY_CODE = {};
   PALETTE.forEach(function (c) {
     var rgb = hexToRgb(c.hex);
     c.r = rgb.r; c.g = rgb.g; c.b = rgb.b;
+    PALETTE_BY_CODE[c.code] = c;
   });
 
   function hexToRgb(hex) {
@@ -446,6 +452,76 @@
       if (d < bestDist) { bestDist = d; best = c; }
     }
     return best;
+  }
+  function clamp255(v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+  // Punches up contrast and saturation slightly before palette matching so
+  // that small high-contrast features (eyes, nose) survive quantization
+  // into a tiny, limited bead palette instead of washing into nearby fur
+  // tones. Values are mild by design - this runs on already-downsampled
+  // (averaged) pixels, so overdoing it just shifts flat regions off-color.
+  function boostForQuantizing(r, g, b) {
+    var cf = 1.12;
+    r = (r - 128) * cf + 128;
+    g = (g - 128) * cf + 128;
+    b = (b - 128) * cf + 128;
+    var lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    var sf = 1.18;
+    r = lum + (r - lum) * sf;
+    g = lum + (g - lum) * sf;
+    b = lum + (b - lum) * sf;
+    return [clamp255(r), clamp255(g), clamp255(b)];
+  }
+  // A lone cell gets smoothed into its neighborhood's majority color only when
+  // it's a close perceptual match to that majority - i.e. it reads as photo
+  // noise (two adjacent shades of the same fur) rather than a deliberate
+  // high-contrast detail (a dark eye against light fur), which is left alone
+  // even when it's a single isolated cell.
+  var DESPECKLE_NOISE_THRESHOLD = 12000;
+  function despeckle(grid, w, h) {
+    var next = [];
+    for (var y = 0; y < h; y++) {
+      var row = [];
+      for (var x = 0; x < w; x++) {
+        var c = grid[y][x];
+        if (!c) { row.push(null); continue; }
+        var counts = {}, total = 0;
+        for (var dy = -1; dy <= 1; dy++) {
+          for (var dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            var ny = y + dy, nx = x + dx;
+            if (ny < 0 || ny >= h || nx < 0 || nx >= w) continue;
+            var nc = grid[ny][nx];
+            if (!nc) continue;
+            counts[nc.code] = (counts[nc.code] || 0) + 1;
+            total++;
+          }
+        }
+        var majCode = null, majCount = 0;
+        Object.keys(counts).forEach(function (code) {
+          if (counts[code] > majCount) { majCount = counts[code]; majCode = code; }
+        });
+        if (majCode && majCode !== c.code && majCount >= 5) {
+          var majColor = PALETTE_BY_CODE[majCode];
+          if (colorDist(c.r, c.g, c.b, majColor.r, majColor.g, majColor.b) < DESPECKLE_NOISE_THRESHOLD) {
+            row.push(majColor);
+            continue;
+          }
+        }
+        row.push(c);
+      }
+      next.push(row);
+    }
+    return next;
+  }
+  function computeUsage(grid, w, h) {
+    var usage = {};
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var c = grid[y][x];
+        if (c) usage[c.code] = (usage[c.code] || 0) + 1;
+      }
+    }
+    return usage;
   }
 
   // ---------- State ----------
@@ -572,25 +648,30 @@
     sctx.imageSmoothingQuality = "high";
     sctx.drawImage(img, 0, 0, gridW, gridH);
     var data = sctx.getImageData(0, 0, gridW, gridH).data;
+    var smartOptimize = document.getElementById("smartOptimize").checked;
 
     gridColors = [];
-    var usage = {};
     for (var y = 0; y < gridH; y++) {
       var row = [];
       for (var x = 0; x < gridW; x++) {
         var idx = (y * gridW + x) * 4;
         var a = data[idx + 3];
         if (a < 64) { row.push(null); continue; }
-        var pc = nearestPaletteColor(data[idx], data[idx + 1], data[idx + 2], PALETTE);
-        row.push(pc);
-        usage[pc.code] = (usage[pc.code] || 0) + 1;
+        var r = data[idx], g = data[idx + 1], b = data[idx + 2];
+        if (smartOptimize) {
+          var boosted = boostForQuantizing(r, g, b);
+          r = boosted[0]; g = boosted[1]; b = boosted[2];
+        }
+        row.push(nearestPaletteColor(r, g, b, PALETTE));
       }
       gridColors.push(row);
     }
 
     var maxColors = parseInt(maxColorsInput.value, 10);
-    if (maxColors && maxColors > 0) reduceColors(maxColors, usage);
+    if (maxColors && maxColors > 0) reduceColors(maxColors);
+    if (smartOptimize) gridColors = despeckle(gridColors, gridW, gridH);
 
+    var usage = computeUsage(gridColors, gridW, gridH);
     buildLegendAndStats(usage);
     blackWhiteMode = false;
     document.getElementById("toggleModeBtn").textContent = "🖨 切换黑白省墨版";
@@ -601,22 +682,34 @@
     resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function reduceColors(maxColors, usage) {
+  // Merges the two most visually similar colors first, not the least-used
+  // color first. Least-used-first would routinely delete an eye or nose
+  // highlight (small, perceptually distinct clusters) before it touched
+  // the dozens of near-identical fur/skin shades that actually need
+  // merging - this way a rare-but-distinctive color stays untouched
+  // because nothing else is close enough to it to be picked as its pair.
+  function reduceColors(maxColors) {
+    var usage = computeUsage(gridColors, gridW, gridH);
     var used = PALETTE.filter(function (c) { return usage[c.code]; });
     while (used.length > maxColors) {
-      used.sort(function (a, b) { return (usage[a.code] || 0) - (usage[b.code] || 0); });
-      var victim = used[0];
-      var remaining = used.slice(1);
-      var replacement = nearestPaletteColor(victim.r, victim.g, victim.b, remaining);
-      for (var y = 0; y < gridH; y++) {
-        for (var x = 0; x < gridW; x++) {
-          var cell = gridColors[y][x];
-          if (cell && cell.code === victim.code) gridColors[y][x] = replacement;
+      var bestI = -1, bestJ = -1, bestDist = Infinity;
+      for (var i = 0; i < used.length; i++) {
+        for (var j = i + 1; j < used.length; j++) {
+          var d = colorDist(used[i].r, used[i].g, used[i].b, used[j].r, used[j].g, used[j].b);
+          if (d < bestDist) { bestDist = d; bestI = i; bestJ = j; }
         }
       }
-      usage[replacement.code] = (usage[replacement.code] || 0) + (usage[victim.code] || 0);
-      delete usage[victim.code];
-      used = remaining;
+      var a = used[bestI], b = used[bestJ];
+      var keep = (usage[a.code] >= usage[b.code]) ? a : b;
+      var drop = (keep === a) ? b : a;
+      for (var y = 0; y < gridH; y++) {
+        for (var x = 0; x < gridW; x++) {
+          if (gridColors[y][x] && gridColors[y][x].code === drop.code) gridColors[y][x] = keep;
+        }
+      }
+      usage[keep.code] = (usage[keep.code] || 0) + (usage[drop.code] || 0);
+      delete usage[drop.code];
+      used = used.filter(function (c) { return c.code !== drop.code; });
     }
   }
 
