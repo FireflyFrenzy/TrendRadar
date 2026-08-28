@@ -268,7 +268,7 @@
   table.legend th, table.legend td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
   table.legend th { color: var(--muted); font-weight: 600; font-size: 12px; }
   .swatch { width: 18px; height: 18px; border-radius: 5px; border: 1px solid rgba(0,0,0,0.15); display: inline-block; vertical-align: middle; }
-  .sym { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; font-weight: 700; font-size: 11px; background: var(--surface-2); border-radius: 6px; }
+  .code-chip { display: inline-block; padding: 2px 7px; font-weight: 700; font-size: 11.5px; font-variant-numeric: tabular-nums; background: var(--surface-2); border-radius: 6px; white-space: nowrap; }
 
   .empty-hint { color: var(--muted); font-size: 13.5px; text-align: center; padding: 50px 10px; }
   .csv-link { display: inline-block; margin-top: 12px; font-size: 12.5px; color: var(--muted); text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; font-family: inherit; }
@@ -455,11 +455,11 @@
     <div class="step">
       <div class="step-head"><span class="step-num">✓</span><h2>买豆子对照清单</h2></div>
       <table class="legend" id="legendTable">
-        <thead><tr><th>标记</th><th>颜色</th><th>参考色号</th><th>需要颗数</th><th>占比</th></tr></thead>
+        <thead><tr><th>色号</th><th>颜色</th><th>需要颗数</th><th>占比</th></tr></thead>
         <tbody id="legendBody"></tbody>
       </table>
       <button class="csv-link no-print" id="downloadCsvBtn">下载这份清单（表格文件）</button>
-      <div class="note">色号为本工具的通用参考编号，购买前请对照你手上的实物色卡确认颜色。</div>
+      <div class="note" id="legendSourceNote"></div>
     </div>
   </div>
 
@@ -1052,13 +1052,6 @@
   function activeFullPalette() { return paletteSource === "mard" ? MARD_PALETTE : PALETTE; }
   function activeFullPaletteByCode() { return paletteSource === "mard" ? MARD_PALETTE_BY_CODE : PALETTE_BY_CODE; }
 
-  var symbolAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  function symbolFor(index) {
-    if (index < 26) return symbolAlphabet[index];
-    var first = Math.floor(index / 26) - 1;
-    var second = index % 26;
-    return symbolAlphabet[first] + symbolAlphabet[second];
-  }
 
   // ---------- Elements ----------
   var dropzone = document.getElementById("dropzone");
@@ -1659,7 +1652,6 @@
       return { color: byCode[code], count: usage[code] };
     });
     entries.sort(function (a, b) { return b.count - a.count; });
-    entries.forEach(function (e, i) { e.symbol = symbolFor(i); e.color._symbol = e.symbol; });
 
     var total = entries.reduce(function (s, e) { return s + e.count; }, 0);
 
@@ -1673,15 +1665,18 @@
       var tr = document.createElement("tr");
       var pct = ((e.count / total) * 100).toFixed(1) + "%";
       tr.innerHTML =
-        '<td><span class="sym">' + e.symbol + '</span></td>' +
+        '<td><span class="code-chip">' + e.color.code + '</span></td>' +
         '<td><span class="swatch" style="background:' + e.color.hex + '"></span> ' + e.color.name + '</td>' +
-        '<td>' + e.color.code + '</td>' +
         '<td>' + e.count + '</td>' +
         '<td>' + pct + '</td>';
       legendBody.appendChild(tr);
     });
 
     window._lastLegendEntries = entries;
+
+    document.getElementById("legendSourceNote").textContent = paletteSource === "mard"
+      ? "色号是 MARD 221 标准参考色卡的真实编号（如 H07、F04），跟图纸格子里印的一致；仍建议购买前对照你手上的实物色卡确认颜色。"
+      : "色号为本工具的通用参考编号，不对应任何品牌官方编号，购买前请对照你手上的实物色卡确认颜色。";
   }
 
   // ---------- Rendering ----------
@@ -1706,10 +1701,14 @@
           targetCtx.strokeStyle = "#999999";
           targetCtx.strokeRect(x * cell + 0.5, y * cell + 0.5, cell - 1, cell - 1);
           targetCtx.fillStyle = "#111111";
-          targetCtx.font = Math.max(7, cell * 0.5) + "px sans-serif";
+          // Codes run up to 3 characters (MARD's own, e.g. "H07"; the
+          // generic set's are always "Cxx") rather than the single/double
+          // letter it used to print, so the font has to shrink to fit the
+          // same cell width.
+          targetCtx.font = "bold " + Math.max(5, cell * 0.32) + "px sans-serif";
           targetCtx.textAlign = "center";
           targetCtx.textBaseline = "middle";
-          targetCtx.fillText(c._symbol || "", x * cell + cell / 2, y * cell + cell / 2 + 1);
+          targetCtx.fillText(c.code || "", x * cell + cell / 2, y * cell + cell / 2 + 1);
         } else {
           targetCtx.fillStyle = c.hex;
           targetCtx.fillRect(x * cell, y * cell, cell, cell);
@@ -1778,9 +1777,9 @@
 
   document.getElementById("downloadCsvBtn").addEventListener("click", function () {
     var entries = window._lastLegendEntries || [];
-    var lines = ["标记,颜色名称,参考色号,颜色HEX,需要颗数"];
+    var lines = ["色号,颜色名称,颜色HEX,需要颗数"];
     entries.forEach(function (e) {
-      lines.push([e.symbol, e.color.name, e.color.code, e.color.hex, e.count].join(","));
+      lines.push([e.color.code, e.color.name, e.color.hex, e.count].join(","));
     });
     var blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
     saveBlob("perler-bead-color-list.csv", blob);
