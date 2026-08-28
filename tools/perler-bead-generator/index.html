@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>拼豆图纸生成器 - 图片转拼豆图案</title>
+<meta name="description" content="上传图片，一键生成拼豆（Perler/Hama）像素图纸：自动分格、配色、统计用豆量，支持彩色图和黑白符号打印图。">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --accent1: #4f46e5;
+    --accent2: #7c3aed;
+    --bg: #fafafa;
+    --card: #ffffff;
+    --text: #2a2a2a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  .header {
+    background: linear-gradient(135deg, var(--accent1) 0%, var(--accent2) 100%);
+    color: #fff;
+    padding: 28px 24px;
+    border-radius: 14px;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  .header h1 { margin: 0 0 6px; font-size: 22px; }
+  .header p { margin: 0; opacity: 0.9; font-size: 13px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 820px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 14px;
+    margin: 0 0 12px;
+    color: var(--accent1);
+    font-weight: 600;
+  }
+
+  .field { margin-bottom: 14px; }
+  .field label {
+    display: block;
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .field input[type="number"], .field select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    background: #fff;
+  }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin-bottom: 10px; }
+  .checkbox-row input { width: auto; }
+
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 22px 10px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone.drag { border-color: var(--accent1); background: #f5f4ff; }
+  .dropzone input { display: none; }
+  .dropzone .thumb { max-width: 100%; max-height: 120px; border-radius: 6px; margin-bottom: 8px; display: none; }
+
+  button.primary {
+    width: 100%;
+    padding: 11px;
+    border: none;
+    border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent1) 0%, var(--accent2) 100%);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary {
+    padding: 9px 14px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: #fff;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button.secondary:hover { border-color: var(--accent1); color: var(--accent1); }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .stat {
+    background: #f7f7fb;
+    border-radius: 9px;
+    padding: 10px;
+    text-align: center;
+  }
+  .stat .num { font-size: 18px; font-weight: 700; color: var(--accent1); }
+  .stat .lbl { font-size: 11px; color: var(--muted); }
+
+  .canvas-wrap {
+    overflow: auto;
+    max-height: 640px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: repeating-conic-gradient(#f0f0f0 0% 25%, #ffffff 0% 50%) 0 0/16px 16px;
+    padding: 10px;
+    text-align: center;
+  }
+  #patternCanvas { image-rendering: pixelated; max-width: none; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+
+  table.legend { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.legend th, table.legend td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  table.legend th { color: var(--muted); font-weight: 600; }
+  .swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.15); display: inline-block; vertical-align: middle; }
+  .sym { display: inline-block; width: 18px; text-align: center; font-weight: 700; font-size: 11px; }
+
+  .empty-hint { color: var(--muted); font-size: 13px; text-align: center; padding: 60px 10px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+  @media print {
+    .card.controls, .toolbar, .header .desc, body > .container > .header { }
+    .no-print { display: none !important; }
+    .canvas-wrap { max-height: none; overflow: visible; border: none; background: #fff; }
+    .layout { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header no-print">
+    <h1>🧩 拼豆图纸生成器</h1>
+    <p>上传图片 → 自动像素化 → 生成拼豆配色图纸与用豆统计表</p>
+  </div>
+
+  <div class="layout">
+    <div class="controls no-print">
+      <div class="card">
+        <h2>1. 上传图片</h2>
+        <div class="dropzone" id="dropzone">
+          <img class="thumb" id="thumb" alt="">
+          <div id="dropText">点击选择图片，或将图片拖到这里</div>
+          <input type="file" id="fileInput" accept="image/*">
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>2. 图纸设置</h2>
+        <div class="field">
+          <label>拼豆板尺寸（宽 × 高，单位：颗）</label>
+          <div class="row2">
+            <input type="number" id="gridW" min="5" max="200" value="40">
+            <input type="number" id="gridH" min="5" max="200" value="40">
+          </div>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="lockAspect" checked>
+          <label style="margin:0;" for="lockAspect">锁定图片原始比例</label>
+        </div>
+        <div class="field">
+          <label>最多使用颜色数（豆子颜色种类，留空=不限制）</label>
+          <input type="number" id="maxColors" min="2" max="60" value="24">
+        </div>
+        <div class="field">
+          <label>预设拼豆板规格</label>
+          <select id="boardPreset">
+            <option value="">自定义（使用上方数值）</option>
+            <option value="29">标准中号板 29×29</option>
+            <option value="14">标准迷你板 14×14</option>
+            <option value="58">拼接大板 58×58（2×2 拼板）</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <button class="primary" id="generateBtn" disabled>生成拼豆图纸</button>
+        <div class="note">图片仅在你的浏览器本地处理，不会上传到任何服务器。</div>
+      </div>
+    </div>
+
+    <div class="result">
+      <div class="card" id="statsCard" style="display:none;">
+        <div class="stats">
+          <div class="stat"><div class="num" id="statTotal">0</div><div class="lbl">总豆量（颗）</div></div>
+          <div class="stat"><div class="num" id="statColors">0</div><div class="lbl">颜色种类</div></div>
+          <div class="stat"><div class="num" id="statSize">0×0</div><div class="lbl">图纸尺寸</div></div>
+        </div>
+        <div class="toolbar no-print">
+          <button class="secondary" id="toggleModeBtn">切换为黑白符号图（打印用）</button>
+          <button class="secondary" id="toggleGridBtn">切换网格间隔线</button>
+          <button class="secondary" id="downloadPngBtn">下载图纸 PNG</button>
+          <button class="secondary" id="downloadCsvBtn">下载用豆清单 CSV</button>
+          <button class="secondary" id="printBtn">打印图纸 + 清单</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="no-print">图纸预览</h2>
+        <div class="canvas-wrap" id="canvasWrap">
+          <div class="empty-hint" id="emptyHint">上传一张图片并点击"生成拼豆图纸"，预览会显示在这里</div>
+          <canvas id="patternCanvas" style="display:none;"></canvas>
+        </div>
+      </div>
+
+      <div class="card" id="legendCard" style="display:none;">
+        <h2 class="no-print">用豆颜色清单</h2>
+        <table class="legend" id="legendTable">
+          <thead><tr><th>符号</th><th>颜色</th><th>参考色号</th><th>颗数</th><th>占比</th></tr></thead>
+          <tbody id="legendBody"></tbody>
+        </table>
+        <div class="note">色号为本工具内置参考色卡编号，与具体品牌色号可能不完全一致，请以实物色卡核对为准。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Reference bead color palette ----------
+  // Generic reference palette (not tied to a specific brand's official numbering).
+  var PALETTE = [
+    {code:"C01", name:"纯白", hex:"#FFFFFF"},
+    {code:"C02", name:"米白", hex:"#F5EFE0"},
+    {code:"C03", name:"浅灰", hex:"#D9D9D9"},
+    {code:"C04", name:"中灰", hex:"#9E9E9E"},
+    {code:"C05", name:"深灰", hex:"#5A5A5A"},
+    {code:"C06", name:"纯黑", hex:"#0E0E0E"},
+    {code:"C07", name:"象牙黄", hex:"#F3E5AB"},
+    {code:"C08", name:"柠檬黄", hex:"#F7E017"},
+    {code:"C09", name:"金黄", hex:"#F4C430"},
+    {code:"C10", name:"橙黄", hex:"#F5A623"},
+    {code:"C11", name:"橙色", hex:"#F0761A"},
+    {code:"C12", name:"深橙", hex:"#C85A17"},
+    {code:"C13", name:"浅肤色", hex:"#F3D2B3"},
+    {code:"C14", name:"肤色", hex:"#E8B58A"},
+    {code:"C15", name:"棕黄", hex:"#C68642"},
+    {code:"C16", name:"浅棕", hex:"#A9734C"},
+    {code:"C17", name:"中棕", hex:"#7A4B27"},
+    {code:"C18", name:"深棕", hex:"#4A2E1D"},
+    {code:"C19", name:"浅粉", hex:"#F9C0CB"},
+    {code:"C20", name:"桃粉", hex:"#F4A0AE"},
+    {code:"C21", name:"玫红", hex:"#E0507A"},
+    {code:"C22", name:"洋红", hex:"#C2185B"},
+    {code:"C23", name:"浅红", hex:"#F26B6B"},
+    {code:"C24", name:"正红", hex:"#E02020"},
+    {code:"C25", name:"深红", hex:"#A31313"},
+    {code:"C26", name:"酒红", hex:"#6E1414"},
+    {code:"C27", name:"浅紫", hex:"#D8B9F0"},
+    {code:"C28", name:"薰衣草紫", hex:"#B79CE0"},
+    {code:"C29", name:"紫色", hex:"#8A4FCB"},
+    {code:"C30", name:"深紫", hex:"#5B2C87"},
+    {code:"C31", name:"浅蓝", hex:"#BEE3F8"},
+    {code:"C32", name:"天蓝", hex:"#6FC3E8"},
+    {code:"C33", name:"宝蓝", hex:"#2E7FD6"},
+    {code:"C34", name:"深蓝", hex:"#1B4F9C"},
+    {code:"C35", name:"藏青", hex:"#0F2C5C"},
+    {code:"C36", name:"青绿", hex:"#3FBFA6"},
+    {code:"C37", name:"薄荷绿", hex:"#9BE0C6"},
+    {code:"C38", name:"浅绿", hex:"#B6E28A"},
+    {code:"C39", name:"草绿", hex:"#7CC24A"},
+    {code:"C40", name:"正绿", hex:"#3E9B3E"},
+    {code:"C41", name:"深绿", hex:"#1F6B2E"},
+    {code:"C42", name:"橄榄绿", hex:"#6B7A2A"},
+    {code:"C43", name:"荧光黄绿", hex:"#C4F73B"},
+    {code:"C44", name:"荧光粉", hex:"#FF3FA4"},
+    {code:"C45", name:"荧光橙", hex:"#FF7A18"},
+    {code:"C46", name:"荧光绿", hex:"#39FF6A"},
+    {code:"C47", name:"卡其色", hex:"#C3B091"},
+    {code:"C48", name:"驼色", hex:"#B79A76"},
+    {code:"C49", name:"珊瑚橙", hex:"#FF7F6B"},
+    {code:"C50", name:"浅青灰", hex:"#A9C0C9"}
+  ];
+  PALETTE.forEach(function (c) {
+    var rgb = hexToRgb(c.hex);
+    c.r = rgb.r; c.g = rgb.g; c.b = rgb.b;
+  });
+
+  function hexToRgb(hex) {
+    hex = hex.replace("#", "");
+    return {
+      r: parseInt(hex.substring(0, 2), 16),
+      g: parseInt(hex.substring(2, 4), 16),
+      b: parseInt(hex.substring(4, 6), 16)
+    };
+  }
+  function rgbToHex(r, g, b) {
+    return "#" + [r, g, b].map(function (v) {
+      return Math.round(v).toString(16).padStart(2, "0");
+    }).join("").toUpperCase();
+  }
+  // "redmean" weighted distance - better perceptual match than plain Euclidean.
+  function colorDist(r1, g1, b1, r2, g2, b2) {
+    var rmean = (r1 + r2) / 2;
+    var dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+    return (2 + rmean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rmean) / 256) * db * db;
+  }
+  function nearestPaletteColor(r, g, b, palette) {
+    var best = null, bestDist = Infinity;
+    for (var i = 0; i < palette.length; i++) {
+      var c = palette[i];
+      var d = colorDist(r, g, b, c.r, c.g, c.b);
+      if (d < bestDist) { bestDist = d; best = c; }
+    }
+    return best;
+  }
+
+  // ---------- State ----------
+  var img = null;
+  var gridColors = null; // 2D array [y][x] -> palette color object (or null for transparent)
+  var gridW = 0, gridH = 0;
+  var blackWhiteMode = false;
+  var showThickGrid = true;
+
+  var symbolAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  function symbolFor(index) {
+    if (index < 26) return symbolAlphabet[index];
+    var first = Math.floor(index / 26) - 1;
+    var second = index % 26;
+    return symbolAlphabet[first] + symbolAlphabet[second];
+  }
+
+  // ---------- Elements ----------
+  var dropzone = document.getElementById("dropzone");
+  var fileInput = document.getElementById("fileInput");
+  var thumb = document.getElementById("thumb");
+  var dropText = document.getElementById("dropText");
+  var gridWInput = document.getElementById("gridW");
+  var gridHInput = document.getElementById("gridH");
+  var lockAspect = document.getElementById("lockAspect");
+  var maxColorsInput = document.getElementById("maxColors");
+  var boardPreset = document.getElementById("boardPreset");
+  var generateBtn = document.getElementById("generateBtn");
+  var canvas = document.getElementById("patternCanvas");
+  var ctx = canvas.getContext("2d");
+  var emptyHint = document.getElementById("emptyHint");
+  var statsCard = document.getElementById("statsCard");
+  var legendCard = document.getElementById("legendCard");
+  var legendBody = document.getElementById("legendBody");
+  var statTotal = document.getElementById("statTotal");
+  var statColors = document.getElementById("statColors");
+  var statSize = document.getElementById("statSize");
+
+  var imgAspect = 1;
+
+  // ---------- Upload handling ----------
+  dropzone.addEventListener("click", function () { fileInput.click(); });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    dropzone.addEventListener(ev, function (e) {
+      e.preventDefault(); dropzone.classList.add("drag");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    dropzone.addEventListener(ev, function (e) {
+      e.preventDefault(); dropzone.classList.remove("drag");
+    });
+  });
+  dropzone.addEventListener("drop", function (e) {
+    var f = e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+  fileInput.addEventListener("change", function () {
+    if (fileInput.files[0]) loadFile(fileInput.files[0]);
+  });
+
+  function loadFile(file) {
+    if (!file.type.startsWith("image/")) return;
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      var image = new Image();
+      image.onload = function () {
+        img = image;
+        imgAspect = image.width / image.height;
+        thumb.src = e.target.result;
+        thumb.style.display = "inline-block";
+        dropText.textContent = file.name;
+        generateBtn.disabled = false;
+        // adjust height field to match aspect if locked
+        if (lockAspect.checked) {
+          var w = parseInt(gridWInput.value, 10) || 40;
+          gridHInput.value = Math.max(5, Math.round(w / imgAspect));
+        }
+      };
+      image.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  gridWInput.addEventListener("input", function () {
+    if (lockAspect.checked && img) {
+      var w = parseInt(gridWInput.value, 10) || 1;
+      gridHInput.value = Math.max(1, Math.round(w / imgAspect));
+    }
+  });
+  gridHInput.addEventListener("input", function () {
+    if (lockAspect.checked && img) {
+      var h = parseInt(gridHInput.value, 10) || 1;
+      gridWInput.value = Math.max(1, Math.round(h * imgAspect));
+    }
+  });
+  boardPreset.addEventListener("change", function () {
+    if (!boardPreset.value) return;
+    var n = parseInt(boardPreset.value, 10);
+    gridWInput.value = n;
+    if (lockAspect.checked && img) {
+      gridHInput.value = Math.max(1, Math.round(n / imgAspect));
+    } else {
+      gridHInput.value = n;
+    }
+  });
+
+  // ---------- Generation ----------
+  generateBtn.addEventListener("click", generatePattern);
+
+  function generatePattern() {
+    if (!img) return;
+    gridW = Math.min(200, Math.max(5, parseInt(gridWInput.value, 10) || 40));
+    gridH = Math.min(200, Math.max(5, parseInt(gridHInput.value, 10) || 40));
+
+    // Downscale the source image onto a gridW x gridH canvas; the browser's
+    // smoothing acts as an averaging box filter so each cell approximates
+    // the average color of that image region.
+    var small = document.createElement("canvas");
+    small.width = gridW;
+    small.height = gridH;
+    var sctx = small.getContext("2d");
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = "high";
+    sctx.drawImage(img, 0, 0, gridW, gridH);
+    var data = sctx.getImageData(0, 0, gridW, gridH).data;
+
+    gridColors = [];
+    var usage = {}; // paletteCode -> count
+    for (var y = 0; y < gridH; y++) {
+      var row = [];
+      for (var x = 0; x < gridW; x++) {
+        var idx = (y * gridW + x) * 4;
+        var a = data[idx + 3];
+        if (a < 64) {
+          row.push(null); // transparent -> no bead
+          continue;
+        }
+        var pc = nearestPaletteColor(data[idx], data[idx + 1], data[idx + 2], PALETTE);
+        row.push(pc);
+        usage[pc.code] = (usage[pc.code] || 0) + 1;
+      }
+      gridColors.push(row);
+    }
+
+    // Reduce distinct color count if requested.
+    var maxColors = parseInt(maxColorsInput.value, 10);
+    if (maxColors && maxColors > 0) {
+      reduceColors(maxColors, usage);
+    }
+
+    buildLegendAndStats(usage);
+    blackWhiteMode = false;
+    render();
+
+    emptyHint.style.display = "none";
+    canvas.style.display = "inline-block";
+    statsCard.style.display = "block";
+    legendCard.style.display = "block";
+  }
+
+  function reduceColors(maxColors, usage) {
+    var used = PALETTE.filter(function (c) { return usage[c.code]; });
+    while (used.length > maxColors) {
+      // find least-used color still active
+      used.sort(function (a, b) { return (usage[a.code] || 0) - (usage[b.code] || 0); });
+      var victim = used[0];
+      var remaining = used.slice(1);
+      var replacement = nearestPaletteColor(victim.r, victim.g, victim.b, remaining);
+      // remap grid + usage
+      for (var y = 0; y < gridH; y++) {
+        for (var x = 0; x < gridW; x++) {
+          var cell = gridColors[y][x];
+          if (cell && cell.code === victim.code) {
+            gridColors[y][x] = replacement;
+          }
+        }
+      }
+      usage[replacement.code] = (usage[replacement.code] || 0) + (usage[victim.code] || 0);
+      delete usage[victim.code];
+      used = remaining;
+    }
+  }
+
+  function buildLegendAndStats(usage) {
+    var entries = Object.keys(usage).map(function (code) {
+      var c = PALETTE.filter(function (p) { return p.code === code; })[0];
+      return { color: c, count: usage[code] };
+    });
+    entries.sort(function (a, b) { return b.count - a.count; });
+    entries.forEach(function (e, i) { e.symbol = symbolFor(i); e.color._symbol = e.symbol; });
+
+    var total = entries.reduce(function (s, e) { return s + e.count; }, 0);
+    statTotal.textContent = total;
+    statColors.textContent = entries.length;
+    statSize.textContent = gridW + "×" + gridH;
+
+    legendBody.innerHTML = "";
+    entries.forEach(function (e) {
+      var tr = document.createElement("tr");
+      var pct = ((e.count / total) * 100).toFixed(1) + "%";
+      tr.innerHTML =
+        '<td><span class="sym">' + e.symbol + '</span></td>' +
+        '<td><span class="swatch" style="background:' + e.color.hex + '"></span> ' + e.color.name + '</td>' +
+        '<td>' + e.color.code + '</td>' +
+        '<td>' + e.count + '</td>' +
+        '<td>' + pct + '</td>';
+      legendBody.appendChild(tr);
+    });
+
+    window._lastLegendEntries = entries; // used by CSV export
+  }
+
+  // ---------- Rendering ----------
+  function render() {
+    var maxCanvasWidth = 1400;
+    var cell = Math.max(6, Math.min(30, Math.floor(maxCanvasWidth / gridW)));
+    canvas.width = gridW * cell;
+    canvas.height = gridH * cell;
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    for (var y = 0; y < gridH; y++) {
+      for (var x = 0; x < gridW; x++) {
+        var c = gridColors[y][x];
+        if (!c) continue;
+        if (blackWhiteMode) {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(x * cell, y * cell, cell, cell);
+          ctx.strokeStyle = "#999999";
+          ctx.strokeRect(x * cell + 0.5, y * cell + 0.5, cell - 1, cell - 1);
+          ctx.fillStyle = "#111111";
+          ctx.font = Math.max(7, cell * 0.5) + "px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(c._symbol || "", x * cell + cell / 2, y * cell + cell / 2 + 1);
+        } else {
+          ctx.fillStyle = c.hex;
+          ctx.fillRect(x * cell, y * cell, cell, cell);
+        }
+      }
+    }
+
+    // grid lines
+    ctx.strokeStyle = "rgba(0,0,0,0.15)";
+    ctx.lineWidth = 1;
+    for (var gx = 0; gx <= gridW; gx++) {
+      ctx.beginPath();
+      ctx.moveTo(gx * cell + 0.5, 0);
+      ctx.lineTo(gx * cell + 0.5, canvas.height);
+      ctx.stroke();
+    }
+    for (var gy = 0; gy <= gridH; gy++) {
+      ctx.beginPath();
+      ctx.moveTo(0, gy * cell + 0.5);
+      ctx.lineTo(canvas.width, gy * cell + 0.5);
+      ctx.stroke();
+    }
+
+    if (showThickGrid) {
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = 2;
+      for (var tx = 0; tx <= gridW; tx += 10) {
+        ctx.beginPath();
+        ctx.moveTo(tx * cell, 0);
+        ctx.lineTo(tx * cell, canvas.height);
+        ctx.stroke();
+      }
+      for (var ty = 0; ty <= gridH; ty += 10) {
+        ctx.beginPath();
+        ctx.moveTo(0, ty * cell);
+        ctx.lineTo(canvas.width, ty * cell);
+        ctx.stroke();
+      }
+    }
+  }
+
+  document.getElementById("toggleModeBtn").addEventListener("click", function () {
+    blackWhiteMode = !blackWhiteMode;
+    this.textContent = blackWhiteMode ? "切换为彩色图" : "切换为黑白符号图（打印用）";
+    render();
+  });
+  document.getElementById("toggleGridBtn").addEventListener("click", function () {
+    showThickGrid = !showThickGrid;
+    render();
+  });
+
+  document.getElementById("downloadPngBtn").addEventListener("click", function () {
+    var link = document.createElement("a");
+    link.download = "拼豆图纸.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  });
+
+  document.getElementById("downloadCsvBtn").addEventListener("click", function () {
+    var entries = window._lastLegendEntries || [];
+    var lines = ["符号,颜色名称,参考色号,颜色HEX,数量"];
+    entries.forEach(function (e) {
+      lines.push([e.symbol, e.color.name, e.color.code, e.color.hex, e.count].join(","));
+    });
+    var blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    var link = document.createElement("a");
+    link.download = "拼豆用豆清单.csv";
+    link.href = URL.createObjectURL(blob);
+    link.click();
+  });
+
+  document.getElementById("printBtn").addEventListener("click", function () {
+    window.print();
+  });
+})();
+</script>
+</body>
+</html>
