@@ -371,6 +371,20 @@
 (function () {
   "use strict";
 
+  // On claude.ai's Artifact preview, a plain <a download> is inert (the
+  // sandbox never hands the frame real download permission), so we also
+  // try the platform's own save API when present. On a normally deployed
+  // page window.claude does not exist at all, so this just stays null and
+  // every download falls back to the classic anchor-click method below.
+  var downloadsCapability = null;
+  (function () {
+    try {
+      if (window.claude && typeof window.claude.use === "function") {
+        window.claude.use("downloads").then(function (ns) { downloadsCapability = ns; });
+      }
+    } catch (e) { /* no-op: falls back to anchor download */ }
+  })();
+
   // ---------- Reference bead color palette ----------
   var PALETTE = [
     {code:"C01", name:"纯白", hex:"#FFFFFF"},
@@ -801,6 +815,12 @@
   });
 
   document.getElementById("downloadPngBtn").addEventListener("click", function () {
+    if (downloadsCapability) {
+      canvas.toBlob(function (blob) {
+        downloadsCapability.save({ filename: "perler-bead-pattern.png", data: blob }).catch(function () {});
+      }, "image/png");
+      return;
+    }
     var link = document.createElement("a");
     link.download = "perler-bead-pattern.png";
     link.href = canvas.toDataURL("image/png");
@@ -814,6 +834,10 @@
       lines.push([e.symbol, e.color.name, e.color.code, e.color.hex, e.count].join(","));
     });
     var blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    if (downloadsCapability) {
+      downloadsCapability.save({ filename: "perler-bead-color-list.csv", data: blob }).catch(function () {});
+      return;
+    }
     var link = document.createElement("a");
     link.download = "perler-bead-color-list.csv";
     link.href = URL.createObjectURL(blob);
