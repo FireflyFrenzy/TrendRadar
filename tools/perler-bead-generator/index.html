@@ -802,7 +802,7 @@
 
   document.getElementById("downloadPngBtn").addEventListener("click", function () {
     var link = document.createElement("a");
-    link.download = "拼豆图纸.png";
+    link.download = "perler-bead-pattern.png";
     link.href = canvas.toDataURL("image/png");
     link.click();
   });
@@ -815,7 +815,7 @@
     });
     var blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
     var link = document.createElement("a");
-    link.download = "拼豆用豆清单.csv";
+    link.download = "perler-bead-color-list.csv";
     link.href = URL.createObjectURL(blob);
     link.click();
   });
