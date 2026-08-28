@@ -24,6 +24,8 @@
     --accent-soft-ink: #A23B57;
     --mint: #3F9C8B;
     --mint-soft: #DEF3EE;
+    --good: #3F9C5A;
+    --warn: #C97A1F;
     --shadow: 0 10px 28px -14px rgba(120, 72, 60, 0.28);
   }
 
@@ -41,6 +43,8 @@
       --accent-soft-ink: #FFC4D3;
       --mint: #63D2BC;
       --mint-soft: #1E3A34;
+      --good: #6BC788;
+      --warn: #E3A855;
       --shadow: 0 10px 28px -14px rgba(0, 0, 0, 0.5);
     }
   }
@@ -57,6 +61,8 @@
     --accent-soft-ink: #FFC4D3;
     --mint: #63D2BC;
     --mint-soft: #1E3A34;
+    --good: #6BC788;
+    --warn: #E3A855;
     --shadow: 0 10px 28px -14px rgba(0, 0, 0, 0.5);
   }
 
@@ -124,6 +130,37 @@
   .tip { font-size: 12px; color: var(--muted); margin-top: 12px; }
 
   .color-pack-head { font-size: 13.5px; font-weight: 700; margin: 18px 0 4px; }
+
+  .mode-switch { display: flex; gap: 8px; margin-bottom: 4px; }
+  .mode-btn {
+    flex: 1; padding: 9px 6px; border: 1.5px solid var(--border); border-radius: 10px;
+    background: var(--surface-2); color: var(--muted); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  }
+  .mode-btn.active { border-color: var(--accent); color: var(--accent-soft-ink); background: var(--accent-soft); }
+
+  .swatch-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .swatch-count { font-size: 12.5px; color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .swatch-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 6px;
+    max-height: 260px; overflow-y: auto; padding: 4px; border: 1px solid var(--border); border-radius: 10px;
+  }
+  .swatch-cell {
+    position: relative; aspect-ratio: 1; border-radius: 8px; cursor: pointer;
+    border: 2px solid rgba(0,0,0,0.12);
+  }
+  .swatch-cell.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .swatch-cell .check {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.6); font-weight: 700; font-size: 14px;
+  }
+  .swatch-cell.selected .check { display: flex; }
+
+  .adaptation-score { font-family: "Baloo 2", sans-serif; font-size: 34px; font-weight: 700; line-height: 1; margin-bottom: 10px; }
+  .adaptation-score.good { color: var(--good); }
+  .adaptation-score.warn { color: var(--warn); }
+  .adaptation-score.bad { color: var(--accent); }
+  .adaptation-notes { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .adaptation-notes .miss-row { display: flex; align-items: center; gap: 8px; }
 
   /* size tiles */
   .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
@@ -295,25 +332,42 @@
       </div>
     </div>
 
-    <div class="color-pack-head">买几色装的拼豆？</div>
-    <div class="tip" style="margin-top:0;">网上买的拼豆一般是 24/48/72/96 色一整盒，图纸最多用这么多种颜色，照着买正好用得上，不会多买或者缺色。</div>
-    <div class="tiles four-col" id="colorTiles">
-      <div class="tile active" data-colors="24">
-        <div class="tile-name">24色</div>
-        <div class="tile-desc">入门装</div>
+    <div class="color-pack-head">豆子颜色</div>
+    <div class="mode-switch" id="colorModeSwitch">
+      <button type="button" class="mode-btn active" data-mode="auto">按数量自动选色</button>
+      <button type="button" class="mode-btn" data-mode="manual">手动选我有的颜色</button>
+    </div>
+
+    <div id="autoColorPanel">
+      <div class="tip" style="margin-top:0;">网上买的拼豆一般是 24/48/72/96 色一整盒，图纸最多用这么多种颜色，照着买正好用得上，不会多买或者缺色。</div>
+      <div class="tiles four-col" id="colorTiles">
+        <div class="tile active" data-colors="24">
+          <div class="tile-name">24色</div>
+          <div class="tile-desc">入门装</div>
+        </div>
+        <div class="tile" data-colors="48">
+          <div class="tile-name">48色</div>
+          <div class="tile-desc">更丰富</div>
+        </div>
+        <div class="tile" data-colors="72">
+          <div class="tile-name">72色</div>
+          <div class="tile-desc">细节多</div>
+        </div>
+        <div class="tile" data-colors="96">
+          <div class="tile-name">96色</div>
+          <div class="tile-desc">最精细</div>
+        </div>
       </div>
-      <div class="tile" data-colors="48">
-        <div class="tile-name">48色</div>
-        <div class="tile-desc">更丰富</div>
+    </div>
+
+    <div id="manualColorPanel" class="hidden">
+      <div class="tip" style="margin-top:0;">你有多少颜色，就用多少颜色——图纸只会用到你勾选的豆子，不会出现你没有的颜色。</div>
+      <div class="swatch-actions">
+        <button type="button" class="btn-secondary" id="selectAllColorsBtn">全选</button>
+        <button type="button" class="btn-secondary" id="clearAllColorsBtn">清空</button>
+        <span class="swatch-count" id="swatchCount">已选 0 种</span>
       </div>
-      <div class="tile" data-colors="72">
-        <div class="tile-name">72色</div>
-        <div class="tile-desc">细节多</div>
-      </div>
-      <div class="tile" data-colors="96">
-        <div class="tile-name">96色</div>
-        <div class="tile-desc">最精细</div>
-      </div>
+      <div class="swatch-grid" id="swatchGrid"></div>
     </div>
 
     <details class="adv">
@@ -356,6 +410,12 @@
 
   <!-- Result -->
   <div id="resultSection" class="hidden">
+    <div class="step" id="adaptationCard" style="display:none;">
+      <div class="step-head"><span class="step-num">%</span><h2>你现有颜色的还原度</h2></div>
+      <div class="adaptation-score"><span id="adaptationPercent">--</span></div>
+      <div class="adaptation-notes" id="adaptationNotes"></div>
+    </div>
+
     <div class="step">
       <div class="pill-row" id="pillRow"></div>
 
@@ -506,13 +566,6 @@
     {code:"C95", name:"粉绿", hex:"#D8F0D0"},
     {code:"C96", name:"粉橙", hex:"#FBD8B8"}
   ];
-  var PALETTE_BY_CODE = {};
-  PALETTE.forEach(function (c) {
-    var rgb = hexToRgb(c.hex);
-    c.r = rgb.r; c.g = rgb.g; c.b = rgb.b;
-    PALETTE_BY_CODE[c.code] = c;
-  });
-
   function hexToRgb(hex) {
     hex = hex.replace("#", "");
     return {
@@ -521,17 +574,45 @@
       b: parseInt(hex.substring(4, 6), 16)
     };
   }
-  function colorDist(r1, g1, b1, r2, g2, b2) {
-    var rmean = (r1 + r2) / 2;
-    var dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
-    return (2 + rmean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rmean) / 256) * db * db;
+  // CIELAB conversion so color matching follows human-perceived closeness
+  // (delta-E) rather than raw RGB distance - two colors with similar RGB
+  // numbers aren't necessarily perceived as similar, and Lab space is built
+  // to track perception instead.
+  function srgbToLinear(v) {
+    v = v / 255;
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
   }
-  function nearestPaletteColor(r, g, b, palette) {
+  function labF(t) { return t > 0.008856 ? Math.pow(t, 1 / 3) : (7.787 * t + 16 / 116); }
+  function rgbToLab(r, g, b) {
+    var rl = srgbToLinear(r), gl = srgbToLinear(g), bl = srgbToLinear(b);
+    var x = (rl * 0.4124564 + gl * 0.3575761 + bl * 0.1804375) / 0.95047;
+    var y = (rl * 0.2126729 + gl * 0.7151522 + bl * 0.0721750) / 1.0;
+    var z = (rl * 0.0193339 + gl * 0.1191920 + bl * 0.9503041) / 1.08883;
+    var fx = labF(x), fy = labF(y), fz = labF(z);
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+  }
+  // Squared delta-E76 between a raw [L,a,b] triple and a palette color's
+  // precomputed Lab. Left squared (no sqrt) since callers only compare
+  // magnitudes; actual delta-E (for the adaptation score) takes sqrt separately.
+  function labDistSq(lab, c) {
+    var dL = lab[0] - c.labL, da = lab[1] - c.labA, db = lab[2] - c.labB;
+    return dL * dL + da * da + db * db;
+  }
+
+  var PALETTE_BY_CODE = {};
+  PALETTE.forEach(function (c) {
+    var rgb = hexToRgb(c.hex);
+    c.r = rgb.r; c.g = rgb.g; c.b = rgb.b;
+    var lab = rgbToLab(rgb.r, rgb.g, rgb.b);
+    c.labL = lab[0]; c.labA = lab[1]; c.labB = lab[2];
+    PALETTE_BY_CODE[c.code] = c;
+  });
+
+  function nearestPaletteColorLab(lab, palette) {
     var best = null, bestDist = Infinity;
     for (var i = 0; i < palette.length; i++) {
-      var c = palette[i];
-      var d = colorDist(r, g, b, c.r, c.g, c.b);
-      if (d < bestDist) { bestDist = d; best = c; }
+      var d = labDistSq(lab, palette[i]);
+      if (d < bestDist) { bestDist = d; best = palette[i]; }
     }
     return best;
   }
@@ -558,7 +639,7 @@
   // noise (two adjacent shades of the same fur) rather than a deliberate
   // high-contrast detail (a dark eye against light fur), which is left alone
   // even when it's a single isolated cell.
-  var DESPECKLE_NOISE_THRESHOLD = 12000;
+  var DESPECKLE_NOISE_THRESHOLD = 225; // squared delta-E76, i.e. delta-E ~15
   function despeckle(grid, w, h) {
     var next = [];
     for (var y = 0; y < h; y++) {
@@ -584,7 +665,7 @@
         });
         if (majCode && majCode !== c.code && majCount >= 5) {
           var majColor = PALETTE_BY_CODE[majCode];
-          if (colorDist(c.r, c.g, c.b, majColor.r, majColor.g, majColor.b) < DESPECKLE_NOISE_THRESHOLD) {
+          if (labDistSq([c.labL, c.labA, c.labB], majColor) < DESPECKLE_NOISE_THRESHOLD) {
             row.push(majColor);
             continue;
           }
@@ -614,6 +695,8 @@
   var imgAspect = 1;
   var selectedTileSize = 40;
   var selectedColorCount = 24;
+  var colorMode = "auto"; // "auto" (pick best N colors) or "manual" (only colors the user checked)
+  var selectedCustomColors = {}; // code -> true
 
   var symbolAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   function symbolFor(index) {
@@ -641,6 +724,14 @@
   var pillRow = document.getElementById("pillRow");
   var sizeTiles = document.getElementById("sizeTiles");
   var colorTiles = document.getElementById("colorTiles");
+  var colorModeSwitch = document.getElementById("colorModeSwitch");
+  var autoColorPanel = document.getElementById("autoColorPanel");
+  var manualColorPanel = document.getElementById("manualColorPanel");
+  var swatchGrid = document.getElementById("swatchGrid");
+  var swatchCount = document.getElementById("swatchCount");
+  var adaptationCard = document.getElementById("adaptationCard");
+  var adaptationPercent = document.getElementById("adaptationPercent");
+  var adaptationNotes = document.getElementById("adaptationNotes");
 
   // ---------- Size tiles ----------
   sizeTiles.addEventListener("click", function (e) {
@@ -660,6 +751,61 @@
     tile.classList.add("active");
     selectedColorCount = parseInt(tile.getAttribute("data-colors"), 10);
   });
+
+  // ---------- Color mode: auto (pick N best) vs manual (only my colors) ----------
+  colorModeSwitch.addEventListener("click", function (e) {
+    var btn = e.target.closest(".mode-btn");
+    if (!btn) return;
+    colorMode = btn.getAttribute("data-mode");
+    Array.prototype.forEach.call(colorModeSwitch.querySelectorAll(".mode-btn"), function (b) {
+      b.classList.toggle("active", b === btn);
+    });
+    autoColorPanel.classList.toggle("hidden", colorMode !== "auto");
+    manualColorPanel.classList.toggle("hidden", colorMode !== "manual");
+    updateGenerateButtonState();
+  });
+
+  PALETTE.forEach(function (c) {
+    var cell = document.createElement("div");
+    cell.className = "swatch-cell";
+    cell.style.background = c.hex;
+    cell.title = c.name + "（" + c.code + "）";
+    cell.setAttribute("data-code", c.code);
+    cell.innerHTML = '<span class="check">✓</span>';
+    swatchGrid.appendChild(cell);
+  });
+  swatchGrid.addEventListener("click", function (e) {
+    var cell = e.target.closest(".swatch-cell");
+    if (!cell) return;
+    var code = cell.getAttribute("data-code");
+    if (selectedCustomColors[code]) {
+      delete selectedCustomColors[code];
+      cell.classList.remove("selected");
+    } else {
+      selectedCustomColors[code] = true;
+      cell.classList.add("selected");
+    }
+    updateSwatchCount();
+  });
+  document.getElementById("selectAllColorsBtn").addEventListener("click", function () {
+    PALETTE.forEach(function (c) { selectedCustomColors[c.code] = true; });
+    Array.prototype.forEach.call(swatchGrid.querySelectorAll(".swatch-cell"), function (cell) { cell.classList.add("selected"); });
+    updateSwatchCount();
+  });
+  document.getElementById("clearAllColorsBtn").addEventListener("click", function () {
+    selectedCustomColors = {};
+    Array.prototype.forEach.call(swatchGrid.querySelectorAll(".swatch-cell"), function (cell) { cell.classList.remove("selected"); });
+    updateSwatchCount();
+  });
+  function updateSwatchCount() {
+    swatchCount.textContent = "已选 " + Object.keys(selectedCustomColors).length + " 种";
+    updateGenerateButtonState();
+  }
+
+  function updateGenerateButtonState() {
+    var manualReady = colorMode !== "manual" || Object.keys(selectedCustomColors).length >= 2;
+    generateBtn.disabled = !img || !manualReady;
+  }
 
   function applyTileSize() {
     gridWInput.value = selectedTileSize;
@@ -697,7 +843,7 @@
         thumb.src = e.target.result;
         thumb.style.display = "inline-block";
         dropInner.style.display = "none";
-        generateBtn.disabled = false;
+        updateGenerateButtonState();
         applyTileSize();
       };
       image.src = e.target.result;
@@ -742,28 +888,47 @@
     var data = sctx.getImageData(0, 0, gridW, gridH).data;
     var smartOptimize = document.getElementById("smartOptimize").checked;
 
+    var candidatePalette = colorMode === "manual"
+      ? PALETTE.filter(function (c) { return selectedCustomColors[c.code]; })
+      : PALETTE;
+    if (candidatePalette.length < 2) return;
+
     gridColors = [];
+    var pixelLabs = [];
     for (var y = 0; y < gridH; y++) {
-      var row = [];
+      var row = [], labRow = [];
       for (var x = 0; x < gridW; x++) {
         var idx = (y * gridW + x) * 4;
         var a = data[idx + 3];
-        if (a < 64) { row.push(null); continue; }
+        if (a < 64) { row.push(null); labRow.push(null); continue; }
         var r = data[idx], g = data[idx + 1], b = data[idx + 2];
         if (smartOptimize) {
           var boosted = boostForQuantizing(r, g, b);
           r = boosted[0]; g = boosted[1]; b = boosted[2];
         }
-        row.push(nearestPaletteColor(r, g, b, PALETTE));
+        var lab = rgbToLab(r, g, b);
+        row.push(nearestPaletteColorLab(lab, candidatePalette));
+        labRow.push(lab);
       }
       gridColors.push(row);
+      pixelLabs.push(labRow);
     }
 
-    reduceColors(selectedColorCount);
+    // In manual mode the candidate set IS the limit the user asked for -
+    // no further merging needed. In auto mode, bring it down to the chosen
+    // pack size.
+    if (colorMode === "auto") reduceColors(selectedColorCount);
     if (smartOptimize) gridColors = despeckle(gridColors, gridW, gridH);
 
     var usage = computeUsage(gridColors, gridW, gridH);
     buildLegendAndStats(usage);
+
+    if (colorMode === "manual") {
+      showAdaptationScore(pixelLabs);
+    } else {
+      adaptationCard.style.display = "none";
+    }
+
     blackWhiteMode = false;
     document.getElementById("toggleModeBtn").textContent = "🖨 切换黑白省墨版";
     render();
@@ -771,6 +936,59 @@
     emptyStep.classList.add("hidden");
     resultSection.classList.remove("hidden");
     resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // How well the user's own checked colors can reproduce this photo,
+  // compared against the best possible match from the full reference
+  // palette. Surfaces concrete colors worth adding, not just a vague score.
+  function showAdaptationScore(pixelLabs) {
+    var totalDeltaE = 0, count = 0;
+    var missingImpact = {};
+    for (var y = 0; y < gridH; y++) {
+      for (var x = 0; x < gridW; x++) {
+        var lab = pixelLabs[y][x];
+        if (!lab) continue;
+        var actual = gridColors[y][x];
+        if (!actual) continue;
+        var dE = Math.sqrt(labDistSq(lab, actual));
+        totalDeltaE += dE;
+        count++;
+        if (dE > 8) {
+          var idealFull = nearestPaletteColorLab(lab, PALETTE);
+          if (idealFull.code !== actual.code && !selectedCustomColors[idealFull.code]) {
+            missingImpact[idealFull.code] = (missingImpact[idealFull.code] || 0) + 1;
+          }
+        }
+      }
+    }
+    var avgDeltaE = count ? totalDeltaE / count : 0;
+    var score = Math.round(100 * Math.max(0, Math.min(1, 1 - avgDeltaE / 40)));
+
+    var scoreClass = score >= 85 ? "good" : (score >= 60 ? "warn" : "bad");
+    adaptationPercent.className = "adaptation-score " + scoreClass;
+    adaptationPercent.textContent = score + "% 还原度";
+
+    var missingList = Object.keys(missingImpact).map(function (code) {
+      return { color: PALETTE_BY_CODE[code], count: missingImpact[code] };
+    });
+    missingList.sort(function (a, b) { return b.count - a.count; });
+    missingList = missingList.slice(0, 3);
+
+    adaptationNotes.innerHTML = "";
+    if (missingList.length === 0) {
+      var okRow = document.createElement("div");
+      okRow.className = "miss-row";
+      okRow.textContent = "✅ 你选的这些颜色基本够用，不用额外买豆子";
+      adaptationNotes.appendChild(okRow);
+    } else {
+      missingList.forEach(function (m) {
+        var row = document.createElement("div");
+        row.className = "miss-row";
+        row.innerHTML = '<span class="swatch" style="background:' + m.color.hex + '"></span> ⚠️ 缺少 ' + m.color.name + '，加上这个颜色能明显提升还原度';
+        adaptationNotes.appendChild(row);
+      });
+    }
+    adaptationCard.style.display = "block";
   }
 
   // Merges the two most visually similar colors first, not the least-used
@@ -786,7 +1004,7 @@
       var bestI = -1, bestJ = -1, bestDist = Infinity;
       for (var i = 0; i < used.length; i++) {
         for (var j = i + 1; j < used.length; j++) {
-          var d = colorDist(used[i].r, used[i].g, used[i].b, used[j].r, used[j].g, used[j].b);
+          var d = labDistSq([used[i].labL, used[i].labA, used[i].labB], used[j]);
           if (d < bestDist) { bestDist = d; bestI = i; bestJ = j; }
         }
       }
