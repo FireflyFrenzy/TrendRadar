@@ -345,34 +345,12 @@
 
     <div class="color-pack-head">豆子颜色</div>
     <div class="mode-switch" id="colorModeSwitch">
-      <button type="button" class="mode-btn active" data-mode="auto">按数量自动选色</button>
-      <button type="button" class="mode-btn" data-mode="manual">手动选我有的颜色</button>
+      <button type="button" class="mode-btn active" data-mode="auto">🤖 智能推荐配色</button>
+      <button type="button" class="mode-btn" data-mode="manual">只用我现有的颜色</button>
     </div>
 
     <div id="autoColorPanel">
-      <div class="tip" style="margin-top:0;">网上买的拼豆一般是 24/48/72/96 色一整盒，图纸最多用这么多种颜色，照着买正好用得上，不会多买或者缺色。</div>
-      <div class="tiles five-col" id="colorTiles">
-        <div class="tile active" data-colors="24">
-          <div class="tile-name">24色</div>
-          <div class="tile-desc">入门装</div>
-        </div>
-        <div class="tile" data-colors="48">
-          <div class="tile-name">48色</div>
-          <div class="tile-desc">更丰富</div>
-        </div>
-        <div class="tile" data-colors="72">
-          <div class="tile-name">72色</div>
-          <div class="tile-desc">细节多</div>
-        </div>
-        <div class="tile" data-colors="96">
-          <div class="tile-name">96色</div>
-          <div class="tile-desc">最精细</div>
-        </div>
-        <div class="tile" data-colors="999">
-          <div class="tile-name">不限</div>
-          <div class="tile-desc">还原度最高</div>
-        </div>
-      </div>
+      <div class="tip" style="margin-top:0;">不用自己猜要多少种颜色——点"生成"时会分析这张照片本身的颜色，自动决定用几种、用哪些颜色最合适：颜色本来就接近的会自动合并，色差明显的会保留，尽量做到"够用又不碎"。</div>
     </div>
 
     <div id="manualColorPanel" class="hidden">
@@ -1034,7 +1012,6 @@
   var blackWhiteMode = false;
   var imgAspect = 1;
   var selectedTileSize = 40;
-  var selectedColorCount = 24;
   // Standard 2.6mm bead pitch (matches the "2.6mm" printed on MARD's own
   // 221-color chart) - used only to estimate real-world print size and
   // page counts, never to claim exact 1:1 physical-scale printing (browser
@@ -1102,7 +1079,6 @@
   var sizeTiles = document.getElementById("sizeTiles");
   var paperSwitch = document.getElementById("paperSwitch");
   var pageEstimateTip = document.getElementById("pageEstimateTip");
-  var colorTiles = document.getElementById("colorTiles");
   var colorModeSwitch = document.getElementById("colorModeSwitch");
   var paletteSourceSwitch = document.getElementById("paletteSourceSwitch");
   var mardNote = document.getElementById("mardNote");
@@ -1170,15 +1146,6 @@
         pages.pagesX + '×' + pages.pagesY + ' = ' + pages.total + ' 张' + paperLabel + '纸拼接（留了重叠边方便对齐）';
     }
   }
-
-  // ---------- Color pack tiles ----------
-  colorTiles.addEventListener("click", function (e) {
-    var tile = e.target.closest(".tile");
-    if (!tile) return;
-    Array.prototype.forEach.call(colorTiles.querySelectorAll(".tile"), function (t) { t.classList.remove("active"); });
-    tile.classList.add("active");
-    selectedColorCount = parseInt(tile.getAttribute("data-colors"), 10);
-  });
 
   // ---------- Color mode: auto (pick N best) vs manual (only my colors) ----------
   colorModeSwitch.addEventListener("click", function (e) {
@@ -1489,7 +1456,7 @@
     // In manual mode the candidate set IS the limit the user asked for -
     // no further merging needed. In auto mode, bring it down to the chosen
     // pack size.
-    if (colorMode === "auto") reduceColors(selectedColorCount, fullPalette);
+    if (colorMode === "auto") reduceColors(recommendColorCount(fullPalette), fullPalette);
     if (smartOptimize) gridColors = despeckle(gridColors, gridW, gridH);
 
     var usage = computeUsage(gridColors, gridW, gridH);
@@ -1624,6 +1591,38 @@
     adaptationCard.style.display = "block";
   }
 
+  // "Smart" color count: instead of asking the user to guess a number,
+  // simulate the same closest-pair merge sequence reduceColors() performs
+  // and stop the FIRST time the cheapest remaining merge would combine two
+  // colors that are already clearly distinguishable (delta-E2000 above the
+  // threshold). Below that threshold the two colors were redundant anyway
+  // (two near-identical fur shades); above it, merging would start erasing
+  // real, visible distinctions - so that's where this particular photo's
+  // natural color count sits. This is a pure simulation: it only reads
+  // gridColors/usage counts, never mutates them.
+  var SMART_STOP_DELTA_E = 8;
+  function recommendColorCount(fullPalette) {
+    var usage = computeUsage(gridColors, gridW, gridH);
+    var used = fullPalette.filter(function (c) { return usage[c.code]; });
+    while (used.length > 2) {
+      var bestI = -1, bestJ = -1, bestDist = Infinity;
+      for (var i = 0; i < used.length; i++) {
+        for (var j = i + 1; j < used.length; j++) {
+          var d = deltaE2000Color([used[i].labL, used[i].labA, used[i].labB], used[j]);
+          if (d < bestDist) { bestDist = d; bestI = i; bestJ = j; }
+        }
+      }
+      if (bestDist > SMART_STOP_DELTA_E) break;
+      var a = used[bestI], b = used[bestJ];
+      var keep = (usage[a.code] >= usage[b.code]) ? a : b;
+      var drop = (keep === a) ? b : a;
+      usage[keep.code] = (usage[keep.code] || 0) + (usage[drop.code] || 0);
+      delete usage[drop.code];
+      used = used.filter(function (c) { return c.code !== drop.code; });
+    }
+    return used.length;
+  }
+
   // Merges the two most visually similar colors first, not the least-used
   // color first. Least-used-first would routinely delete an eye or nose
   // highlight (small, perceptually distinct clusters) before it touched
@@ -1667,7 +1666,7 @@
     pillRow.innerHTML =
       '<span class="pill">' + gridW + '×' + gridH + ' 格</span>' +
       '<span class="pill">共 ' + total.toLocaleString() + ' 颗豆子</span>' +
-      '<span class="pill">' + entries.length + ' 种颜色</span>';
+      '<span class="pill">' + entries.length + ' 种颜色' + (colorMode === "auto" ? "（智能推荐）" : "") + '</span>';
 
     legendBody.innerHTML = "";
     entries.forEach(function (e) {
